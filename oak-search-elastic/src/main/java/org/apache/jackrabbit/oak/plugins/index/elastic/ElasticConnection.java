@@ -20,7 +20,15 @@ import co.elastic.clients.elasticsearch.ElasticsearchAsyncClient;
 import co.elastic.clients.transport.ElasticsearchTransport;
 import org.apache.http.Header;
 import org.apache.http.HttpHost;
+import org.apache.http.client.cache.CacheResponseStatus;
+import org.apache.http.client.cache.HttpCacheContext;
+import org.apache.http.client.config.RequestConfig;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.cache.CachingHttpClient;
 import org.apache.http.message.BasicHeader;
+import org.apache.http.impl.client.cache.CacheConfig;
 import org.elasticsearch.client.RestClient;
 import org.elasticsearch.client.RestClientBuilder;
 import org.jetbrains.annotations.NotNull;
@@ -109,19 +117,7 @@ public class ElasticConnection implements Closeable {
         if (clients == null) {
             synchronized (this) {
                 if (clients == null) {
-                    RestClientBuilder builder = RestClient.builder(new HttpHost(host, port, scheme));
-                    if (apiKeyId != null && !apiKeyId.isEmpty() &&
-                            apiKeySecret != null && !apiKeySecret.isEmpty()) {
-                        String apiKeyAuth = Base64.getEncoder().encodeToString(
-                                (apiKeyId + ":" + apiKeySecret).getBytes(StandardCharsets.UTF_8)
-                        );
-                        Header[] headers = new Header[]{new BasicHeader("Authorization", "ApiKey " + apiKeyAuth)};
-                        builder.setDefaultHeaders(headers);
-                    }
-                    builder.setRequestConfigCallback(
-                            requestConfigBuilder -> requestConfigBuilder.setSocketTimeout(ES_SOCKET_TIMEOUT));
-
-                    RestClient httpClient = builder.build();
+                    RestClient httpClient = makeRestClient();
 
                     ElasticsearchTransport transport = new RestClientTransport(
                             httpClient, new JacksonJsonpMapper());
@@ -132,6 +128,83 @@ public class ElasticConnection implements Closeable {
             }
         }
         return clients;
+    }
+
+    private @NotNull RestClient makeRestClient() {
+        RestClientBuilder builder = RestClient.builder(new HttpHost(host, port, scheme));
+        if (apiKeyId != null && !apiKeyId.isEmpty() &&
+                apiKeySecret != null && !apiKeySecret.isEmpty()) {
+            String apiKeyAuth = Base64.getEncoder().encodeToString(
+                    (apiKeyId + ":" + apiKeySecret).getBytes(StandardCharsets.UTF_8)
+            );
+            Header[] headers = new Header[]{new BasicHeader("Authorization", "ApiKey " + apiKeyAuth)};
+            builder.setDefaultHeaders(headers);
+        }
+        builder.setHttpClientConfigCallback(httpClientBuilder -> httpClientBuilder
+                .setMaxConnTotal(100)
+                .setMaxConnPerRoute(100)
+        );
+        return builder.build();
+    }
+
+
+    private @NotNull RestClient makeCachingRestClient() {
+
+        CacheConfig cacheConfig = CacheConfig.custom()
+                .setMaxCacheEntries(1000)
+                .setMaxObjectSize(8192)
+                .build();
+        RequestConfig requestConfig = RequestConfig.custom()
+                .setConnectTimeout(30000)
+                .setSocketTimeout(30000)
+                .build();
+        CloseableHttpClient cachingClient = CachingHttpClient.custom()
+                .setCacheConfig(cacheConfig)
+                .setDefaultRequestConfig(requestConfig)
+                .build();
+
+        HttpCacheContext context = HttpCacheContext.create();
+        HttpGet httpget = new HttpGet("http://www.mydomain.com/content/");
+        CloseableHttpResponse response = cachingClient.execute(httpget, context);
+        try {
+            CacheResponseStatus responseStatus = context.getCacheResponseStatus();
+            switch (responseStatus) {
+                case CACHE_HIT:
+                    System.out.println("A response was generated from the cache with " +
+                            "no requests sent upstream");
+                    break;
+                case CACHE_MODULE_RESPONSE:
+                    System.out.println("The response was generated directly by the " +
+                            "caching module");
+                    break;
+                case CACHE_MISS:
+                    System.out.println("The response came from an upstream server");
+                    break;
+                case VALIDATED:
+                    System.out.println("The response was generated from the cache " +
+                            "after validating the entry with the origin server");
+                    break;
+            }
+        } finally {
+            response.close();
+        }
+
+
+        RestClientBuilder builder = RestClient
+                .builder(new HttpHost(host, port, scheme));
+        if (apiKeyId != null && !apiKeyId.isEmpty() &&
+                apiKeySecret != null && !apiKeySecret.isEmpty()) {
+            String apiKeyAuth = Base64.getEncoder().encodeToString(
+                    (apiKeyId + ":" + apiKeySecret).getBytes(StandardCharsets.UTF_8)
+            );
+            Header[] headers = new Header[]{new BasicHeader("Authorization", "ApiKey " + apiKeyAuth)};
+            builder.setDefaultHeaders(headers);
+        }
+        builder.setHttpClientConfigCallback(httpClientBuilder -> httpClientBuilder
+                .setMaxConnTotal(100)
+                .setMaxConnPerRoute(100)
+        );
+        return builder.build();
     }
 
     /**
