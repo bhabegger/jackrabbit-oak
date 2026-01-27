@@ -48,6 +48,8 @@
               org.apache.jackrabbit.oak.plugins.index.elastic.ElasticIndexProviderService
             </_exportcontents>
             <Import-Package>
+              !net.spy.memcached.*,
+              !net.sf.ehcache.*,
               !com.ibm.*, <!-- see OAK-11076 -->
               !org.apache.derby.*, <!-- see OAK-11076 -->
               !io.opentelemetry.sdk.autoconfigure.*,
@@ -66,6 +68,7 @@
             <Embed-Dependency>
               oak-search;scope=compile|runtime;inline=true,
               elasticsearch-java;groupId=co.elastic.clients,
+              spymemcached;groupId=net.spy;inline=true,
               *;scope=compile|runtime
             </Embed-Dependency>
             <Embed-Transitive>true</Embed-Transitive>
@@ -159,6 +162,20 @@
           <artifactId>slf4j-log4j12</artifactId>
         </exclusion>
       </exclusions>
+    </dependency>
+
+
+    <dependency>
+      <groupId>org.apache.httpcomponents</groupId>
+      <artifactId>httpclient-cache</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.httpcomponents</groupId>
+      <artifactId>httpasyncclient</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.httpcomponents</groupId>
+      <artifactId>httpasyncclient-cache</artifactId>
     </dependency>
 
     <dependency>
