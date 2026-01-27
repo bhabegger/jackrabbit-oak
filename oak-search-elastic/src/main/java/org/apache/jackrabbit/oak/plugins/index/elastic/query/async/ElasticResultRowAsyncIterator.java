@@ -342,7 +342,7 @@ public class ElasticResultRowAsyncIterator implements ElasticQueryIterator, Elas
             searchStartTime = System.currentTimeMillis();
             requests++;
 
-            ongoingRequest = indexNode.getConnection().getAsyncClient()
+            ongoingRequest = indexNode.getConnection().getAdhocClient()
                     .search(searchRequest, ObjectNode.class)
                     .whenComplete((this::handleResponse));
             metricHandler.markQuery(indexNode.getDefinition().getIndexPath(), true);
@@ -461,7 +461,7 @@ public class ElasticResultRowAsyncIterator implements ElasticQueryIterator, Elas
                 LOG.trace("Kicking new search after query {}", searchReq);
 
                 searchStartTime = System.currentTimeMillis();
-                ongoingRequest = indexNode.getConnection().getAsyncClient()
+                ongoingRequest = indexNode.getConnection().getAdhocClient()
                         .search(searchReq, ObjectNode.class)
                         .whenComplete(this::handleResponse);
                 metricHandler.markQuery(indexNode.getDefinition().getIndexPath(), false);

@@ -109,13 +109,15 @@ public class ElasticConnection implements Closeable {
         if (clients == null) {
             synchronized (this) {
                 if (clients == null) {
-                    RestClientBuilder builder = RestClient.builder(new HttpHost(host, port, scheme));
+                    HttpHost httpHost = new HttpHost(host, port, scheme);
+                    RestClientBuilder builder = RestClient.builder(httpHost);
+                    String apiToken = null;
                     if (apiKeyId != null && !apiKeyId.isEmpty() &&
                             apiKeySecret != null && !apiKeySecret.isEmpty()) {
-                        String apiKeyAuth = Base64.getEncoder().encodeToString(
+                        apiToken = Base64.getEncoder().encodeToString(
                                 (apiKeyId + ":" + apiKeySecret).getBytes(StandardCharsets.UTF_8)
                         );
-                        Header[] headers = new Header[]{new BasicHeader("Authorization", "ApiKey " + apiKeyAuth)};
+                        Header[] headers = new Header[]{new BasicHeader("Authorization", "ApiKey " + apiToken)};
                         builder.setDefaultHeaders(headers);
                     }
                     builder.setRequestConfigCallback(
@@ -127,7 +129,9 @@ public class ElasticConnection implements Closeable {
                             httpClient, new JacksonJsonpMapper());
                     ElasticsearchClient esClient = new ElasticsearchClient(transport);
                     ElasticsearchAsyncClient esAsyncClient = new ElasticsearchAsyncClient(transport);
-                    clients = new Clients(esClient, esAsyncClient);
+
+                    ElasticsearchAdhocCachingClient adhocClient = new ElasticsearchAdhocCachingClient(httpHost, apiToken);
+                    clients = new Clients(esClient, esAsyncClient, adhocClient);
                 }
             }
         }
@@ -200,13 +204,19 @@ public class ElasticConnection implements Closeable {
         return scheme + "://" + host + ":" + port + "/" + indexPrefix;
     }
 
+    public ElasticsearchAdhocCachingClient getAdhocClient() {
+        return getClients().adhocClient;
+    }
+
     private static class Clients {
         public final ElasticsearchClient client;
         public final ElasticsearchAsyncClient asyncClient;
+        public final ElasticsearchAdhocCachingClient adhocClient;
 
-        Clients(ElasticsearchClient client, ElasticsearchAsyncClient asyncClient) {
+        Clients(ElasticsearchClient client, ElasticsearchAsyncClient asyncClient, ElasticsearchAdhocCachingClient adhocClient) {
             this.client = client;
             this.asyncClient = asyncClient;
+            this.adhocClient = adhocClient;
         }
     }
 
