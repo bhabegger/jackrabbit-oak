@@ -20,6 +20,7 @@ This document describes the design of a **Lucene Abstraction Layer** for Apache 
 - **Two independent toggles** for fine-grained control
 - **Clean abstraction** isolating Oak from Lucene API changes
 - **No intermediate versions** (no Lucene 5, 6, 7, 8 needed)
+- **Leverage embedded Lucene 4.7** - Oak already has 707 embedded Lucene source files
 
 ---
 
@@ -28,10 +29,15 @@ This document describes the design of a **Lucene Abstraction Layer** for Apache 
 ### Current Situation
 
 Oak is tightly coupled to Lucene 4.7.2 (released 2013):
+- **707 Lucene 4.7.2 source files embedded** in `oak-lucene/src/main/java/org/apache/lucene/`
 - Direct Lucene imports throughout Oak codebase
 - Lucene types exposed in public APIs
 - Upgrading Lucene requires changes across ~30 files
 - Production indices in Lucene 4.7 format
+
+**Why Embedded?** Historically, Oak embedded Lucene source to apply custom patches and
+maintain control over the exact version. This means we don't have Maven dependency
+conflicts with Lucene 4.7 - it's already isolated!
 
 ### Challenges
 
@@ -59,42 +65,29 @@ Oak is tightly coupled to Lucene 4.7.2 (released 2013):
 
 ### High-Level Design
 
-```
-┌─────────────────────────────────────────────────────┐
-│              Oak Core                               │
-│         (Business Logic)                            │
-└──────────────────┬──────────────────────────────────┘
-                   │
-                   │ Uses abstractions only
-                   ▼
-┌─────────────────────────────────────────────────────┐
-│         Oak Search SPI                              │
-│    (Version-agnostic interfaces)                    │
-│                                                     │
-│  - IndexDirectory                                   │
-│  - IndexReader / IndexWriter                        │
-│  - QueryBuilder                                     │
-│  - DocumentBuilder                                  │
-│  - AnalyzerFactory                                  │
-└──────────────────┬──────────────────────────────────┘
-                   │
-                   │ Implementations
-         ┌─────────┴─────────┬──────────────┐
-         ▼                   ▼              ▼
-┌─────────────────┐  ┌──────────────┐  ┌──────────────┐
-│ Lucene 4 Impl   │  │ Lucene 9     │  │ Lucene 10+   │
-│ (TEMPORARY)     │  │ Impl         │  │ (Future)     │
-│                 │  │ (PRIMARY)    │  │              │
-│ Native 4.7.2    │  │ Native 9.x   │  │              │
-│ Read-only after │  │ Read/Write   │  │              │
-│ migration       │  │              │  │              │
-└─────────────────┘  └──────────────┘  └──────────────┘
+```mermaid
+graph TB
+    OakCore[Oak Core<br/>Business Logic]
+    SPI[Oak Search SPI<br/>Version-agnostic interfaces<br/>- IndexDirectory<br/>- IndexReader/Writer<br/>- QueryBuilder<br/>- DocumentBuilder]
+    Embedded[Embedded Lucene 4.7.2<br/>EXISTING: 707 source files<br/>oak-lucene/src/.../lucene/]
+    L4Impl[Lucene 4 Wrapper<br/>Read-only after migration]
+    L9Impl[Lucene 9 Implementation<br/>PRIMARY<br/>Native 9.x<br/>Read/Write]
+    L10Impl[Lucene 10+<br/>Future]
+
+    OakCore -->|Uses abstractions only| SPI
+    SPI --> L4Impl
+    SPI --> L9Impl
+    SPI --> L10Impl
+    L4Impl -->|Wraps| Embedded
+
+    style Embedded fill:#f9f,stroke:#333,stroke-width:2px
+    style L9Impl fill:#9f9,stroke:#333,stroke-width:2px
 ```
 
 ### Module Structure
 
 ```
-oak-search-spi/
+oak-search-spi/                          [NEW - Core abstraction]
 ├── src/main/java/
 │   └── org.apache.jackrabbit.oak.plugins.index.search.spi/
 │       ├── IndexDirectory.java          (Directory abstraction)
@@ -105,32 +98,38 @@ oak-search-spi/
 │       ├── AnalyzerFactory.java         (Analyzer creation)
 │       └── IndexVersion.java            (Version detection)
 
-oak-lucene-4/                            [TEMPORARY - Delete after migration]
+oak-lucene/                              [EXISTING - Modified]
 ├── src/main/java/
-│   └── org.apache.jackrabbit.oak.plugins.index.lucene4/
-│       ├── Lucene4IndexDirectory.java
-│       ├── Lucene4IndexReader.java
-│       ├── Lucene4IndexWriter.java
-│       └── Lucene4QueryBuilder.java
-└── pom.xml                              (Depends on Lucene 4.7.2)
+│   ├── org.apache.lucene/               ** 707 EMBEDDED LUCENE 4.7.2 FILES **
+│   │   ├── codecs/
+│   │   ├── index/
+│   │   ├── store/
+│   │   ├── search/
+│   │   └── ...                          (Complete Lucene 4.7.2 source)
+│   │
+│   └── org.apache.jackrabbit.oak.plugins.index.lucene/
+│       ├── LuceneIndexManager.java      (Routing, version detection)
+│       ├── DualIndexWriter.java         (Dual-write coordinator)
+│       ├── MigrationCoordinator.java    (Background converter)
+│       ├── SegmentVersionDetector.java  (Read segment metadata)
+│       │
+│       └── embedded/                    [NEW - Wrappers for embedded code]
+│           ├── EmbeddedLuceneReader.java    (Wraps embedded 4.7)
+│           ├── EmbeddedLuceneWriter.java    (Wraps embedded 4.7)
+│           └── EmbeddedLuceneQueryBuilder.java
 
-oak-lucene-9/                            [PERMANENT]
+oak-lucene-9/                            [NEW - Lucene 9 implementation]
 ├── src/main/java/
 │   └── org.apache.jackrabbit.oak.plugins.index.lucene9/
 │       ├── Lucene9IndexDirectory.java
 │       ├── Lucene9IndexReader.java
 │       ├── Lucene9IndexWriter.java
 │       └── Lucene9QueryBuilder.java
-└── pom.xml                              (Depends on Lucene 9.x)
-
-oak-lucene-core/                         [PERMANENT]
-├── src/main/java/
-│   └── org.apache.jackrabbit.oak.plugins.index.lucene/
-│       ├── LuceneIndexManager.java      (Routing, version detection)
-│       ├── DualIndexWriter.java         (Dual-write coordinator)
-│       ├── MigrationCoordinator.java    (Background converter)
-│       └── SegmentVersionDetector.java  (Read segment metadata)
+└── pom.xml                              (Depends on Lucene 9.x from Maven)
 ```
+
+**Key Insight:** Oak already has Lucene 4.7.2 embedded (707 source files). We don't need
+a separate oak-lucene-4 module - we just wrap the existing embedded code!
 
 ---
 
@@ -148,55 +147,62 @@ oak.lucene.keepLegacyUpdated = true     # Default: ON
 
 ### State Diagram
 
-```
-                  ┌──────────────────────────────────────┐
-                  │ STATE 0: Pre-Migration               │
-                  │ enableMigration = false              │
-                  │ keepLegacyUpdated = true             │
-                  │                                      │
-                  │ Reads:  Lucene 4.7                   │
-                  │ Writes: Lucene 4.7 only              │
-                  │ JARs:   lucene-4.7.2                 │
-                  └──────────────┬───────────────────────┘
-                                 │
-                                 │ enableMigration → true
-                                 ▼
-                  ┌──────────────────────────────────────┐
-                  │ STATE 1: Active Migration            │
-                  │ enableMigration = true               │
-                  │ keepLegacyUpdated = true             │
-                  │                                      │
-                  │ Reads:  4.7 → 9 (after P2)           │
-                  │ Writes: DUAL WRITE (4.7 + 9)         │
-                  │ JARs:   lucene-4.7.2 + lucene-9.x    │
-                  │ Background: Converting 4.7 → 9       │
-                  └──┬────────────────────┬──────────────┘
-                     │                    │
-      enableMigration│                    │ keepLegacyUpdated
-      → false        │                    │ → false
-                     ▼                    ▼
-      ┌─────────────────────┐  ┌──────────────────────────┐
-      │ Back to STATE 0     │  │ STATE 2: Point of Return │
-      │ (Rollback OK)       │  │ enableMigration = true   │
-      │                     │  │ keepLegacyUpdated = false│
-      │ Stop conversion     │  │                          │
-      │ Stop dual writes    │  │ Reads:  Lucene 9         │
-      │ Resume 4.7 only     │  │ Writes: Lucene 9 only    │
-      └─────────────────────┘  │ JARs:   lucene-9.x       │
-                                │ Background: Cleanup 4.7  │
-                                └───────────┬──────────────┘
-                                            │
-                                            │ enableMigration
-                                            │ → false
-                                            ▼
-                                ┌────────────────────────────┐
-                                │ ❌ VALIDATION ERROR        │
-                                │                            │
-                                │ Cannot disable migration   │
-                                │ when keepLegacyUpdated is  │
-                                │ false. Legacy segments     │
-                                │ deleted. IRREVERSIBLE.     │
-                                └────────────────────────────┘
+```mermaid
+stateDiagram-v2
+    [*] --> State0: Default
+
+    State0: STATE 0: Pre-Migration
+    State0: enableMigration = false
+    State0: keepLegacyUpdated = true
+    State0: ━━━━━━━━━━━━━━━━━━━━
+    State0: Reads: Lucene 4.7 (embedded)
+    State0: Writes: Lucene 4.7 only
+    State0: Source: 707 embedded files
+
+    State1: STATE 1: Active Migration
+    State1: enableMigration = true
+    State1: keepLegacyUpdated = true
+    State1: ━━━━━━━━━━━━━━━━━━━━
+    State1: Reads: 4.7 → 9 (after P2)
+    State1: Writes: DUAL (4.7 + 9)
+    State1: Background: Converting
+    State1: Can rollback ✅
+
+    State2: STATE 2: Point of No Return
+    State2: enableMigration = true
+    State2: keepLegacyUpdated = false
+    State2: ━━━━━━━━━━━━━━━━━━━━
+    State2: Reads: Lucene 9 only
+    State2: Writes: Lucene 9 only
+    State2: IRREVERSIBLE ⚠️
+
+    ValidationError: ❌ VALIDATION ERROR
+    ValidationError: Cannot disable migration
+    ValidationError: Legacy deleted
+    ValidationError: IRREVERSIBLE
+
+    State0 --> State1: enableMigration\n→ true
+    State1 --> State0: enableMigration\n→ false\n(Rollback OK)
+    State1 --> State2: keepLegacyUpdated\n→ false\n(IRREVERSIBLE)
+    State2 --> ValidationError: enableMigration\n→ false\n(BLOCKED)
+
+    note right of State0
+        Default stable state
+        Production ready
+        Embedded Lucene 4.7
+    end note
+
+    note right of State1
+        Dual-write active
+        Can stay here indefinitely
+        Build confidence over weeks
+    end note
+
+    note right of State2
+        Pure Lucene 9
+        No rollback possible
+        Cleanup embedded code
+    end note
 ```
 
 ### State Transition Rules
@@ -1394,15 +1400,17 @@ With abstraction layer in place, future upgrades are straightforward:
 oak-search-spi
   └─ (no Lucene dependencies)
 
-oak-lucene-4
-  └─ depends on: oak-search-spi, lucene-4.7.2
+oak-lucene (EXISTING)
+  ├─ depends on: oak-search-spi
+  ├─ contains: 707 embedded Lucene 4.7.2 source files
+  └─ (no external Lucene 4 Maven dependency needed!)
 
-oak-lucene-9
-  └─ depends on: oak-search-spi, lucene-9.x
-
-oak-lucene-core
-  └─ depends on: oak-search-spi, oak-lucene-4, oak-lucene-9
+oak-lucene-9 (NEW)
+  └─ depends on: oak-search-spi, lucene-core:9.x, lucene-backward-codecs:9.x
 ```
+
+**Key Point:** No need for `oak-lucene-4` module - Lucene 4.7.2 is already embedded
+in `oak-lucene/src/main/java/org/apache/lucene/` (707 files)!
 
 ### Package Structure
 
@@ -1415,26 +1423,33 @@ org.apache.jackrabbit.oak.plugins.index.search.spi/
   ├─ DocumentBuilder
   └─ IndexVersion
 
-org.apache.jackrabbit.oak.plugins.index.lucene4/
-  ├─ Lucene4IndexDirectory
-  ├─ Lucene4IndexReader
-  ├─ Lucene4IndexWriter
-  └─ Lucene4QueryBuilder
+org.apache.lucene/                        [EMBEDDED - 707 files]
+  ├─ codecs/
+  ├─ index/
+  ├─ store/
+  ├─ search/
+  └─ ...                                  (Complete Lucene 4.7.2 source)
+
+org.apache.jackrabbit.oak.plugins.index.lucene/
+  ├─ LuceneIndexManager                   (main entry point, routing)
+  ├─ DualIndexWriter                      (dual-write coordinator)
+  ├─ MigrationCoordinator                 (background conversion)
+  ├─ MigrationConfigManager               (config validation)
+  ├─ SegmentConverter                     (4.7 → 9 converter)
+  ├─ SegmentVersionDetector               (detect segment version)
+  ├─ SegmentTracker                       (track conversion progress)
+  │
+  └─ embedded/                            [NEW - Wrappers]
+      ├─ EmbeddedLuceneIndexDirectory     (Wraps embedded 4.7)
+      ├─ EmbeddedLuceneIndexReader        (Wraps embedded 4.7)
+      ├─ EmbeddedLuceneIndexWriter        (Wraps embedded 4.7)
+      └─ EmbeddedLuceneQueryBuilder       (Wraps embedded 4.7)
 
 org.apache.jackrabbit.oak.plugins.index.lucene9/
   ├─ Lucene9IndexDirectory
   ├─ Lucene9IndexReader
   ├─ Lucene9IndexWriter
   └─ Lucene9QueryBuilder
-
-org.apache.jackrabbit.oak.plugins.index.lucene/
-  ├─ LuceneIndexManager       (main entry point)
-  ├─ DualIndexWriter
-  ├─ MigrationCoordinator
-  ├─ MigrationConfigManager
-  ├─ SegmentConverter
-  ├─ SegmentVersionDetector
-  └─ SegmentTracker
 ```
 
 ---
