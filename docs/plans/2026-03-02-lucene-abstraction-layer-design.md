@@ -151,57 +151,60 @@ oak.lucene.keepLegacyUpdated = true     # Default: ON
 stateDiagram-v2
     [*] --> State0: Default
 
-    State0: STATE 0: Pre-Migration
-    State0: enableMigration = false
-    State0: keepLegacyUpdated = true
-    State0: ━━━━━━━━━━━━━━━━━━━━
-    State0: Reads: Lucene 4.7 (embedded)
-    State0: Writes: Lucene 4.7 only
-    State0: Source: 707 embedded files
+    state "STATE 0: Pre-Migration" as State0
+    state "STATE 1: Active Migration" as State1
+    state "STATE 2: Point of No Return" as State2
+    state "❌ VALIDATION ERROR" as ValidationError
 
-    State1: STATE 1: Active Migration
-    State1: enableMigration = true
-    State1: keepLegacyUpdated = true
-    State1: ━━━━━━━━━━━━━━━━━━━━
-    State1: Reads: 4.7 → 9 (after P2)
-    State1: Writes: DUAL (4.7 + 9)
-    State1: Background: Converting
-    State1: Can rollback ✅
-
-    State2: STATE 2: Point of No Return
-    State2: enableMigration = true
-    State2: keepLegacyUpdated = false
-    State2: ━━━━━━━━━━━━━━━━━━━━
-    State2: Reads: Lucene 9 only
-    State2: Writes: Lucene 9 only
-    State2: IRREVERSIBLE ⚠️
-
-    ValidationError: ❌ VALIDATION ERROR
-    ValidationError: Cannot disable migration
-    ValidationError: Legacy deleted
-    ValidationError: IRREVERSIBLE
-
-    State0 --> State1: enableMigration\n→ true
-    State1 --> State0: enableMigration\n→ false\n(Rollback OK)
-    State1 --> State2: keepLegacyUpdated\n→ false\n(IRREVERSIBLE)
-    State2 --> ValidationError: enableMigration\n→ false\n(BLOCKED)
+    State0 --> State1: enableMigration → true
+    State1 --> State0: enableMigration → false\n(Rollback OK)
+    State1 --> State2: keepLegacyUpdated → false\n(IRREVERSIBLE ⚠️)
+    State2 --> ValidationError: enableMigration → false\n(BLOCKED)
 
     note right of State0
+        enableMigration = false
+        keepLegacyUpdated = true
+        ━━━━━━━━━━━━━━━━━━━━
+        Reads: Lucene 4.7 (embedded)
+        Writes: Lucene 4.7 only
+        Source: 707 embedded files
+
         Default stable state
         Production ready
-        Embedded Lucene 4.7
     end note
 
     note right of State1
+        enableMigration = true
+        keepLegacyUpdated = true
+        ━━━━━━━━━━━━━━━━━━━━
+        Reads: 4.7 → 9 (after P2)
+        Writes: DUAL (4.7 + 9)
+        Background: Converting
+
         Dual-write active
         Can stay here indefinitely
         Build confidence over weeks
+        Can rollback ✅
     end note
 
     note right of State2
+        enableMigration = true
+        keepLegacyUpdated = false
+        ━━━━━━━━━━━━━━━━━━━━
+        Reads: Lucene 9 only
+        Writes: Lucene 9 only
+
         Pure Lucene 9
         No rollback possible
         Cleanup embedded code
+        IRREVERSIBLE ⚠️
+    end note
+
+    note right of ValidationError
+        Cannot disable migration when
+        keepLegacyUpdated is false
+        Legacy segments deleted
+        IRREVERSIBLE
     end note
 ```
 
