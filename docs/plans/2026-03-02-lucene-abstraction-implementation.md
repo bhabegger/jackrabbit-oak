@@ -7,7 +7,7 @@
 **Architecture:** Three-layer design with Oak Search SPI (abstractions), embedded Lucene 4.7 wrappers, and new Lucene 9 implementation. Dual-write coordinator for migration phase with background segment conversion.
 
 **Tech Stack:**
-- Java 8+
+- Java 11 (minimum required version)
 - Maven multi-module project
 - Lucene 4.7.2 (embedded - 707 files in oak-lucene/src/main/java/org/apache/lucene/)
 - Lucene 9.x (Maven dependency in new oak-lucene-9 module)
