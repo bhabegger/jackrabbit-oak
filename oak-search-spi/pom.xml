@@ -33,6 +33,19 @@
     <name>Oak Search SPI</name>
     <description>Version-agnostic search abstraction layer for Oak</description>
 
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <!-- Override parent POM's problematic argLine -->
+                    <argLine>-Xmx512m</argLine>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
     <dependencies>
         <!-- No Lucene dependencies! Pure abstractions -->
         <dependency>
