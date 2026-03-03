@@ -41,11 +41,12 @@ public final class Lucene47Query implements Query {
     /**
      * Returns the underlying Lucene 4.7 Query.
      *
-     * <p>Package-private for use by other Lucene 4.7 components.</p>
+     * <p>Public for use by oak-lucene components that need to extract
+     * the native Lucene query from the SPI wrapper.</p>
      *
      * @return the Lucene query
      */
-    org.apache.lucene.search.Query getLuceneQuery() {
+    public org.apache.lucene.search.Query getLuceneQuery() {
         return delegate;
     }
 }

@@ -60,6 +60,8 @@ import org.apache.jackrabbit.oak.plugins.index.IndexConstants;
 import org.apache.jackrabbit.oak.plugins.index.lucene.property.HybridPropertyIndexLookup;
 import org.apache.jackrabbit.oak.plugins.index.lucene.reader.LuceneIndexReader;
 import org.apache.jackrabbit.oak.plugins.index.lucene.spi.FulltextQueryTermsProvider;
+import org.apache.jackrabbit.oak.plugins.index.lucene.spi.LuceneIndexHelper;
+import org.apache.jackrabbit.oak.plugins.index.lucene.spi.Lucene47Query;
 import org.apache.jackrabbit.oak.plugins.index.lucene.util.FacetHelper;
 import org.apache.jackrabbit.oak.plugins.index.lucene.util.MoreLikeThisHelper;
 import org.apache.jackrabbit.oak.plugins.index.lucene.util.PathStoredFieldVisitor;
@@ -1194,19 +1196,59 @@ public class LucenePropertyIndex extends FulltextIndex {
         }
     }
 
+    /**
+     * Creates a term query using the Search SPI abstraction.
+     * This enables version-agnostic query building for future Lucene 9 migration.
+     *
+     * @param field the field name
+     * @param value the term value
+     * @return a Lucene query created via SPI
+     */
+    private static org.apache.lucene.search.Query createTermQueryViaSPI(String field, String value) {
+        org.apache.jackrabbit.oak.plugins.index.search.spi.QueryBuilder builder =
+            LuceneIndexHelper.newQueryBuilder();
+        org.apache.jackrabbit.oak.plugins.index.search.spi.Query spiQuery =
+            builder.term(field, value);
+        // Extract the underlying Lucene query for use with existing code
+        return ((Lucene47Query) spiQuery).getLuceneQuery();
+    }
+
+    /**
+     * Creates a range query using the Search SPI abstraction.
+     * This enables version-agnostic query building for future Lucene 9 migration.
+     *
+     * @param field the field name
+     * @param lowerValue lower bound (null for unbounded)
+     * @param upperValue upper bound (null for unbounded)
+     * @param includeLower whether to include lower bound
+     * @param includeUpper whether to include upper bound
+     * @return a Lucene query created via SPI
+     */
+    private static org.apache.lucene.search.Query createRangeQueryViaSPI(String field, String lowerValue, String upperValue,
+                                                boolean includeLower, boolean includeUpper) {
+        org.apache.jackrabbit.oak.plugins.index.search.spi.QueryBuilder builder =
+            LuceneIndexHelper.newQueryBuilder();
+        org.apache.jackrabbit.oak.plugins.index.search.spi.Query spiQuery =
+            builder.range(field, lowerValue, upperValue, includeLower, includeUpper);
+        // Extract the underlying Lucene query for use with existing code
+        return ((Lucene47Query) spiQuery).getLuceneQuery();
+    }
+
     @Nullable
     private static Query createQuery(String propertyName, PropertyRestriction pr,
                                      PropertyDefinition defn) {
         int propType = determinePropertyType(defn, pr);
 
         if (pr.isNullRestriction()) {
-            return new TermQuery(new Term(FieldNames.NULL_PROPS, defn.name));
+            // Use SPI for null property check queries
+            return createTermQueryViaSPI(FieldNames.NULL_PROPS, defn.name);
         }
 
         //If notNullCheckEnabled explicitly enabled use the simple TermQuery
         //otherwise later fallback to range query
         if (pr.isNotNullRestriction() && defn.notNullCheckEnabled) {
-            return new TermQuery(new Term(FieldNames.NOT_NULL_PROPS, defn.name));
+            // Use SPI for not-null property check queries
+            return createTermQueryViaSPI(FieldNames.NOT_NULL_PROPS, defn.name);
         }
 
         switch (propType) {
@@ -1327,31 +1369,34 @@ public class LucenePropertyIndex extends FulltextIndex {
                 String last = pr.last != null ? pr.last.getValue(STRING) : null;
                 if (pr.first != null && pr.first.equals(pr.last) && pr.firstIncluding
                         && pr.lastIncluding) {
-                    // [property]=[value]
-                    return new TermQuery(new Term(propertyName, first));
+                    // [property]=[value] - Use SPI for exact match term queries
+                    return createTermQueryViaSPI(propertyName, first);
                 } else if (pr.first != null && pr.last != null) {
-                    return TermRangeQuery.newStringRange(propertyName, first, last,
+                    // Use SPI for bounded range queries
+                    return createRangeQueryViaSPI(propertyName, first, last,
                             pr.firstIncluding, pr.lastIncluding);
                 } else if (pr.first != null && pr.last == null) {
-                    // '>' & '>=' use cases
-                    return TermRangeQuery.newStringRange(propertyName, first, null, pr.firstIncluding, true);
+                    // '>' & '>=' use cases - Use SPI for lower-bounded range
+                    return createRangeQueryViaSPI(propertyName, first, null, pr.firstIncluding, true);
                 } else if (pr.last != null && !pr.last.equals(pr.first)) {
-                    // '<' & '<='
-                    return TermRangeQuery.newStringRange(propertyName, null, last, true, pr.lastIncluding);
+                    // '<' & '<=' - Use SPI for upper-bounded range
+                    return createRangeQueryViaSPI(propertyName, null, last, true, pr.lastIncluding);
                 } else if (pr.list != null) {
                     BooleanQuery in = new BooleanQuery();
                     for (PropertyValue value : pr.list) {
                         String strVal = value.getValue(STRING);
-                        in.add(new TermQuery(new Term(propertyName, strVal)), BooleanClause.Occur.SHOULD);
+                        // Use SPI for each term in the IN clause
+                        in.add(createTermQueryViaSPI(propertyName, strVal), BooleanClause.Occur.SHOULD);
                     }
                     return in;
                 } else if (pr.isNotNullRestriction()) {
-                    return new TermRangeQuery(propertyName, null, null, true, true);
+                    // Use SPI for unbounded range (matches all non-null values)
+                    return createRangeQueryViaSPI(propertyName, null, null, true, true);
                 } else if (pr.isNot && pr.not != null) {
                     // -[property]=[value]
                     BooleanQuery bool = new BooleanQuery();
-                    // This will exclude entries with [property]=[value]
-                    bool.add(new TermQuery(new Term(propertyName, pr.not.getValue(STRING))), MUST_NOT);
+                    // This will exclude entries with [property]=[value] - Use SPI
+                    bool.add(createTermQueryViaSPI(propertyName, pr.not.getValue(STRING)), MUST_NOT);
                     return bool;
                 }
             }
