@@ -67,7 +67,9 @@ import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
 import org.apache.lucene.analysis.tokenattributes.OffsetAttribute;
 import org.apache.lucene.document.Document;
+import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexReader;
+import org.apache.jackrabbit.oak.plugins.index.lucene.spi.Lucene47IndexReader;
 import org.apache.lucene.index.IndexableField;
 import org.apache.lucene.index.MultiFields;
 import org.apache.lucene.index.Term;
@@ -365,7 +367,14 @@ public class LuceneIndex implements AdvanceFulltextQueryIndex {
                 Validate.checkState(indexNode != null);
                 try {
                     IndexSearcher searcher = indexNode.getSearcher();
-                    LuceneRequestFacade luceneRequestFacade = getLuceneRequest(filter, searcher.getIndexReader(),
+                    // Wrap native reader in SPI for query building (searcher API not yet abstracted)
+                    IndexReader nativeReader = searcher.getIndexReader();
+                    if (!(nativeReader instanceof DirectoryReader)) {
+                        throw new IllegalStateException("Expected DirectoryReader but got: " + nativeReader.getClass().getName());
+                    }
+                    org.apache.jackrabbit.oak.plugins.index.search.spi.IndexReader spiReader =
+                        new Lucene47IndexReader((DirectoryReader) nativeReader);
+                    LuceneRequestFacade luceneRequestFacade = getLuceneRequest(filter, spiReader,
                             nonFullTextConstraints, indexNode.getDefinition());
                     if (luceneRequestFacade.getLuceneRequest() instanceof Query) {
                         Query query = (Query) luceneRequestFacade.getLuceneRequest();
@@ -499,7 +508,14 @@ public class LuceneIndex implements AdvanceFulltextQueryIndex {
                 Validate.checkState(indexNode != null);
                 try {
                     IndexSearcher searcher = indexNode.getSearcher();
-                    LuceneRequestFacade luceneRequestFacade = getLuceneRequest(filter, searcher.getIndexReader(),
+                    // Wrap native reader in SPI for query building (searcher API not yet abstracted)
+                    IndexReader nativeReader = searcher.getIndexReader();
+                    if (!(nativeReader instanceof DirectoryReader)) {
+                        throw new IllegalStateException("Expected DirectoryReader but got: " + nativeReader.getClass().getName());
+                    }
+                    org.apache.jackrabbit.oak.plugins.index.search.spi.IndexReader spiReader =
+                        new Lucene47IndexReader((DirectoryReader) nativeReader);
+                    LuceneRequestFacade luceneRequestFacade = getLuceneRequest(filter, spiReader,
                             nonFullTextConstraints, indexNode.getDefinition());
                     if (luceneRequestFacade.getLuceneRequest() instanceof Query) {
                         Query query = (Query) luceneRequestFacade.getLuceneRequest();
@@ -610,15 +626,23 @@ public class LuceneIndex implements AdvanceFulltextQueryIndex {
      * Get the Lucene query for the given filter.
      *
      * @param filter the filter, including full-text constraint
-     * @param reader the Lucene reader
+     * @param spiReader the SPI index reader
      * @param nonFullTextConstraints whether non-full-text constraints (such a
      *            path, node type, and so on) should be added to the Lucene
      *            query
      * @param indexDefinition nodestate that contains the index definition
      * @return the Lucene query
      */
-    private static LuceneRequestFacade getLuceneRequest(Filter filter, IndexReader reader, boolean nonFullTextConstraints,
+    private static LuceneRequestFacade getLuceneRequest(Filter filter, org.apache.jackrabbit.oak.plugins.index.search.spi.IndexReader spiReader, boolean nonFullTextConstraints,
                                                         LuceneIndexDefinition indexDefinition) {
+        // Extract native reader for Lucene API calls (searcher API not yet abstracted)
+        IndexReader reader;
+        if (spiReader instanceof Lucene47IndexReader) {
+            reader = ((Lucene47IndexReader) spiReader).getLuceneReader();
+        } else {
+            throw new IllegalStateException("Expected Lucene47IndexReader but got: " + spiReader.getClass().getName());
+        }
+
         List<Query> qs = new ArrayList<Query>();
         Analyzer analyzer = indexDefinition.getAnalyzer();
         FullTextExpression ft = filter.getFullTextConstraint();

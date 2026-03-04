@@ -88,7 +88,7 @@ public class DefaultIndexWriterTest {
         LuceneIndexDefinition defn = new LuceneIndexDefinition(root, builder.getNodeState(), "/foo");
         DefaultIndexWriter writer = createWriter(defn, true);
 
-        IndexWriter w = writer.getWriter();
+        IndexWriter w = writer.getNativeWriter();
         assertThat(w.getConfig().getMergeScheduler(), instanceOf(SerialMergeScheduler.class));
     }
 
@@ -99,7 +99,7 @@ public class DefaultIndexWriterTest {
         DefaultIndexWriter writer = new DefaultIndexWriter(defn, builder,
                 fsdir, INDEX_DATA_CHILD_NAME, SUGGEST_DATA_CHILD_NAME, true, writerConfig);
 
-        IndexWriter w = writer.getWriter();
+        IndexWriter w = writer.getNativeWriter();
         assertThat(w.getConfig().getMergeScheduler(), instanceOf(ConcurrentMergeScheduler.class));
     }
 
@@ -110,7 +110,7 @@ public class DefaultIndexWriterTest {
         LuceneIndexDefinition defn = new LuceneIndexDefinition(root, builder.getNodeState(), "/foo");
         DefaultIndexWriter writer = createWriter(defn, true);
 
-        IndexWriter w = writer.getWriter();
+        IndexWriter w = writer.getNativeWriter();
         assertEquals(w.getConfig().getRAMBufferSizeMB(), 42, 0);
     }
 
@@ -124,7 +124,7 @@ public class DefaultIndexWriterTest {
 
         writer.updateDocument("/a/b", document);
 
-        assertFalse(writer.getWriter().hasDeletions());
+        assertFalse(writer.getNativeWriter().hasDeletions());
         writer.close(100);
     }
 
@@ -138,7 +138,7 @@ public class DefaultIndexWriterTest {
 
         writer.updateDocument("/a/b", document);
 
-        assertTrue(writer.getWriter().hasDeletions());
+        assertTrue(writer.getNativeWriter().hasDeletions());
         writer.close(100);
     }
 

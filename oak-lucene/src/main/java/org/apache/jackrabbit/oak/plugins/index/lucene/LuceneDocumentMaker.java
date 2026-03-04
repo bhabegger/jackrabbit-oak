@@ -31,6 +31,7 @@ import org.apache.jackrabbit.oak.api.PropertyState;
 import org.apache.jackrabbit.oak.api.Type;
 import org.apache.jackrabbit.oak.commons.PathUtils;
 import org.apache.jackrabbit.oak.commons.log.LogSilencer;
+import org.apache.jackrabbit.oak.plugins.index.lucene.spi.Lucene47DocumentBuilder;
 import org.apache.jackrabbit.oak.plugins.index.lucene.util.FacetsConfigProvider;
 import org.apache.jackrabbit.oak.plugins.index.search.Aggregate;
 import org.apache.jackrabbit.oak.plugins.index.search.FieldNames;
@@ -120,32 +121,87 @@ public class LuceneDocumentMaker extends FulltextDocumentMaker<Document> {
     @Override
     protected void indexTypedProperty(Document doc, PropertyState property, String pname, PropertyDefinition pd, int i) {
         int tag = property.getType().tag();
+        Field f = createTypedFieldViaSPI(property, pname, pd, i, tag);
+        doc.add(f);
+    }
 
-        Field f;
+    /**
+     * Creates a string field using the Search SPI.
+     * Helper method to eliminate code duplication across multiple indexing methods.
+     *
+     * @param fieldName the field name
+     * @param value the field value
+     * @return the Lucene field created via SPI
+     */
+    private Field createStringFieldViaSPI(String fieldName, String value) {
+        Lucene47DocumentBuilder builder = new Lucene47DocumentBuilder();
+        builder.addStringField(fieldName, value,
+            org.apache.jackrabbit.oak.plugins.index.search.spi.DocumentBuilder.FieldType.STRING_NOT_ANALYZED);
+        org.apache.jackrabbit.oak.plugins.index.search.spi.Document spiDoc = builder.build();
+        org.apache.lucene.document.Document luceneDoc =
+            ((org.apache.jackrabbit.oak.plugins.index.lucene.spi.Lucene47Document) spiDoc).getLuceneDocument();
+
+        // Type safety check before casting
+        IndexableField field = luceneDoc.getFields().get(0); // Only field we added
+        if (!(field instanceof Field)) {
+            throw new IllegalStateException("Expected Field but got: " + field.getClass().getName());
+        }
+        return (Field) field;
+    }
+
+    /**
+     * Creates a typed field using the Search SPI.
+     *
+     * @param property the property state
+     * @param pname the property name
+     * @param pd the property definition (unused in current impl)
+     * @param i the value index
+     * @param tag the property type tag
+     * @return the Lucene field created via SPI
+     */
+    private Field createTypedFieldViaSPI(PropertyState property, String pname, PropertyDefinition pd, int i, int tag) {
+        // Create a temporary builder to construct the field via SPI
+        Lucene47DocumentBuilder builder = new Lucene47DocumentBuilder();
+
         if (tag == Type.LONG.tag()) {
-            f = new LongField(pname, property.getValue(Type.LONG, i), Field.Store.NO);
+            builder.addLongField(pname, property.getValue(Type.LONG, i),
+                               org.apache.jackrabbit.oak.plugins.index.search.spi.DocumentBuilder.FieldType.LONG);
         } else if (tag == Type.DATE.tag()) {
             String date = property.getValue(Type.DATE, i);
-            f = new LongField(pname, FieldFactory.dateToLong(date), Field.Store.NO);
+            builder.addLongField(pname, FieldFactory.dateToLong(date),
+                               org.apache.jackrabbit.oak.plugins.index.search.spi.DocumentBuilder.FieldType.LONG);
         } else if (tag == Type.DOUBLE.tag()) {
-            f = new DoubleField(pname, property.getValue(Type.DOUBLE, i), Field.Store.NO);
+            builder.addDoubleField(pname, property.getValue(Type.DOUBLE, i),
+                                 org.apache.jackrabbit.oak.plugins.index.search.spi.DocumentBuilder.FieldType.DOUBLE);
         } else if (tag == Type.BOOLEAN.tag()) {
-            f = new StringField(pname, property.getValue(Type.BOOLEAN, i).toString(), Field.Store.NO);
+            builder.addStringField(pname, property.getValue(Type.BOOLEAN, i).toString(),
+                                 org.apache.jackrabbit.oak.plugins.index.search.spi.DocumentBuilder.FieldType.STRING_NOT_ANALYZED);
         } else {
-            f = new StringField(pname, property.getValue(Type.STRING, i), Field.Store.NO);
+            builder.addStringField(pname, property.getValue(Type.STRING, i),
+                                 org.apache.jackrabbit.oak.plugins.index.search.spi.DocumentBuilder.FieldType.STRING_NOT_ANALYZED);
         }
 
-        doc.add(f);
+        // Build the document and extract the field
+        org.apache.jackrabbit.oak.plugins.index.search.spi.Document spiDoc = builder.build();
+        org.apache.lucene.document.Document luceneDoc =
+            ((org.apache.jackrabbit.oak.plugins.index.lucene.spi.Lucene47Document) spiDoc).getLuceneDocument();
+
+        // Type safety check before casting
+        IndexableField field = luceneDoc.getFields().get(0); // Only field we added
+        if (!(field instanceof Field)) {
+            throw new IllegalStateException("Expected Field but got: " + field.getClass().getName());
+        }
+        return (Field) field;
     }
 
     @Override
     protected void indexNotNullProperty(Document doc, PropertyDefinition pd) {
-        doc.add(new StringField(FieldNames.NOT_NULL_PROPS, pd.name, Field.Store.NO));
+        doc.add(createStringFieldViaSPI(FieldNames.NOT_NULL_PROPS, pd.name));
     }
 
     @Override
     protected void indexNullProperty(Document doc, PropertyDefinition pd) {
-        doc.add(new StringField(FieldNames.NULL_PROPS, pd.name, Field.Store.NO));
+        doc.add(createStringFieldViaSPI(FieldNames.NULL_PROPS, pd.name));
     }
 
     private String constructAnalyzedPropertyName(String pname) {
@@ -219,7 +275,7 @@ public class LuceneDocumentMaker extends FulltextDocumentMaker<Document> {
     @Override
     protected Document initDoc() {
         Document doc = new Document();
-        doc.add(newPathField(path));
+        doc.add(createStringFieldViaSPI(FieldNames.PATH, path));
         return doc;
     }
 

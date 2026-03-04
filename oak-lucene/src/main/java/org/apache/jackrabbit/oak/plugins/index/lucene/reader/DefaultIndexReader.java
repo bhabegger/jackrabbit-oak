@@ -22,10 +22,9 @@ package org.apache.jackrabbit.oak.plugins.index.lucene.reader;
 import java.io.IOException;
 
 import org.apache.jackrabbit.oak.commons.pio.Closer;
+import org.apache.jackrabbit.oak.plugins.index.lucene.spi.Lucene47IndexReader;
 import org.apache.jackrabbit.oak.plugins.index.lucene.util.SuggestHelper;
 import org.apache.lucene.analysis.Analyzer;
-import org.apache.lucene.index.DirectoryReader;
-import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.search.suggest.analyzing.AnalyzingInfixSuggester;
 import org.apache.lucene.store.Directory;
 import org.jetbrains.annotations.Nullable;
@@ -36,14 +35,14 @@ public class DefaultIndexReader implements LuceneIndexReader {
     private final Closer closer;
     private final Directory directory;
     private final Directory suggestDirectory;
-    private final IndexReader reader;
+    private final org.apache.jackrabbit.oak.plugins.index.search.spi.IndexReader reader;
     private final AnalyzingInfixSuggester lookup;
 
     public DefaultIndexReader(Directory directory, @Nullable Directory suggestDirectory, Analyzer analyzer) throws IOException {
         this.closer = Closer.create();
         this.directory = directory;
         closer.register(this.directory);
-        this.reader = DirectoryReader.open(directory);
+        this.reader = new Lucene47IndexReader(directory);
         closer.register(this.reader);
         this.suggestDirectory = suggestDirectory;
         if (suggestDirectory != null) {
@@ -56,8 +55,11 @@ public class DefaultIndexReader implements LuceneIndexReader {
     }
 
     @Override
-    public IndexReader getReader() {
-        return reader;
+    public org.apache.lucene.index.IndexReader getReader() {
+        if (reader instanceof Lucene47IndexReader) {
+            return ((Lucene47IndexReader) reader).getLuceneReader();
+        }
+        throw new IllegalStateException("Expected Lucene47IndexReader but got: " + reader.getClass().getName());
     }
 
     @Override

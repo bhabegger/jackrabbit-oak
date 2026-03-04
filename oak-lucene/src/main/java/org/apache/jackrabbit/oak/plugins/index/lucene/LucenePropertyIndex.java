@@ -60,6 +60,9 @@ import org.apache.jackrabbit.oak.plugins.index.IndexConstants;
 import org.apache.jackrabbit.oak.plugins.index.lucene.property.HybridPropertyIndexLookup;
 import org.apache.jackrabbit.oak.plugins.index.lucene.reader.LuceneIndexReader;
 import org.apache.jackrabbit.oak.plugins.index.lucene.spi.FulltextQueryTermsProvider;
+import org.apache.jackrabbit.oak.plugins.index.lucene.spi.LuceneIndexHelper;
+import org.apache.jackrabbit.oak.plugins.index.lucene.spi.Lucene47Query;
+import org.apache.jackrabbit.oak.plugins.index.search.spi.QueryBuilder;
 import org.apache.jackrabbit.oak.plugins.index.lucene.util.FacetHelper;
 import org.apache.jackrabbit.oak.plugins.index.lucene.util.MoreLikeThisHelper;
 import org.apache.jackrabbit.oak.plugins.index.lucene.util.PathStoredFieldVisitor;
@@ -107,14 +110,10 @@ import org.apache.lucene.queryparser.flexible.standard.config.StandardQueryConfi
 import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.IndexSearcher;
-import org.apache.lucene.search.MatchAllDocsQuery;
-import org.apache.lucene.search.NumericRangeQuery;
-import org.apache.lucene.search.PrefixQuery;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.Sort;
 import org.apache.lucene.search.SortField;
-import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.TermRangeQuery;
 import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.search.TotalHitCountCollector;
@@ -606,13 +605,18 @@ public class LucenePropertyIndex extends FulltextIndex {
             if (!PathUtils.denotesRoot(path)) {
                 if (getPlanResult(plan).indexDefinition.evaluatePathRestrictions()) {
 
-                    BooleanQuery compositeQuery = new BooleanQuery();
-                    compositeQuery.add(query, BooleanClause.Occur.MUST);
+                    Term ancestorTerm = newAncestorTerm(path);
+                    Query pathQuery = createTermQueryViaSPI(ancestorTerm.field(), ancestorTerm.text());
 
-                    Query pathQuery = new TermQuery(newAncestorTerm(path));
-                    compositeQuery.add(pathQuery, BooleanClause.Occur.MUST);
+                    QueryBuilder qb = LuceneIndexHelper.newQueryBuilder();
+                    org.apache.jackrabbit.oak.plugins.index.search.spi.Query wrappedQuery = qb.wrap(query);
+                    org.apache.jackrabbit.oak.plugins.index.search.spi.Query wrappedPath = qb.wrap(pathQuery);
+                    org.apache.jackrabbit.oak.plugins.index.search.spi.Query compositeQuery = qb.bool()
+                        .must(wrappedQuery)
+                        .must(wrappedPath)
+                        .build();
 
-                    query = compositeQuery;
+                    query = extractLuceneQuery(compositeQuery);
                 } else {
                     LOG.warn("Descendant clause could not be added without path restrictions enabled. Plan: {}", plan);
                 }
@@ -962,12 +966,12 @@ public class LucenePropertyIndex extends FulltextIndex {
                 //When called in planning mode then some queries like rep:similar
                 //cannot create query as reader is not provided. In such case we
                 //just return match all queries
-                return new LuceneRequestFacade<Query>(new MatchAllDocsQuery());
+                return new LuceneRequestFacade<Query>(createMatchAllQueryViaSPI());
             }
             //For purely nodeType based queries all the documents would have to
             //be returned (if the index definition has a single rule)
             if (planResult.evaluateNodeTypeRestriction()) {
-                return new LuceneRequestFacade<Query>(new MatchAllDocsQuery());
+                return new LuceneRequestFacade<Query>(createMatchAllQueryViaSPI());
             }
 
             throw new IllegalStateException("No query created for filter " + filter);
@@ -999,12 +1003,20 @@ public class LucenePropertyIndex extends FulltextIndex {
                     // if we have only NOT CLAUSES we have to add a match all docs (*.*) for the
                     // query to work
                     // This check is needed now for Older version of lucene(Implementation in LuceneIndex.java)
-                    ibq.add(new MatchAllDocsQuery(), BooleanClause.Occur.SHOULD);
+                    ibq.add(createMatchAllQueryViaSPI(), BooleanClause.Occur.SHOULD);
                 }
             }
             return new LuceneRequestFacade<>(qs.get(0));
         }
-        BooleanQuery bq = new BooleanQuery();
+
+        // Create BooleanQuery via SPI for version independence
+        org.apache.jackrabbit.oak.plugins.index.search.spi.Query spiQuery =
+            createBooleanQueryBuilder().build();
+
+        // Extract native query for complex manipulation (legacy query unwrapping logic
+        // that calls getClauses(), add(), and works with BooleanClause instances directly)
+        BooleanQuery bq = (BooleanQuery) extractLuceneQuery(spiQuery);
+
         for (Query q : qs) {
             boolean unwrapped = false;
             if (q instanceof BooleanQuery) {
@@ -1074,15 +1086,22 @@ public class LucenePropertyIndex extends FulltextIndex {
                     if ("/".equals(path)) {
                         break;
                     }
-                    qs.add(new TermQuery(newAncestorTerm(path)));
+                    Term ancestorTerm = newAncestorTerm(path);
+                    qs.add(createTermQueryViaSPI(ancestorTerm.field(), ancestorTerm.text()));
                 }
                 break;
             case DIRECT_CHILDREN:
                 if (defn.evaluatePathRestrictions()) {
-                    BooleanQuery bq = new BooleanQuery();
-                    bq.add(new BooleanClause(new TermQuery(newAncestorTerm(path)), BooleanClause.Occur.MUST));
-                    bq.add(new BooleanClause(newDepthQuery(path, planResult), BooleanClause.Occur.MUST));
-                    qs.add(bq);
+                    Term ancestorTerm = newAncestorTerm(path);
+                    Query ancestorQuery = createTermQueryViaSPI(ancestorTerm.field(), ancestorTerm.text());
+                    Query depthQuery = newDepthQuery(path, planResult);
+
+                    QueryBuilder qb = LuceneIndexHelper.newQueryBuilder();
+                    org.apache.jackrabbit.oak.plugins.index.search.spi.Query bq = qb.bool()
+                        .must(qb.wrap(ancestorQuery))
+                        .must(qb.wrap(depthQuery))
+                        .build();
+                    qs.add(extractLuceneQuery(bq));
                 }
                 break;
             case EXACT:
@@ -1091,10 +1110,12 @@ public class LucenePropertyIndex extends FulltextIndex {
                 if (planResult.isPathTransformed()) {
                     String parentPathSegment = planResult.getParentPathSegment();
                     if (!StreamUtils.toStream(PathUtils.elements(parentPathSegment)).anyMatch("*"::equals)) {
-                        qs.add(new TermQuery(newPathTerm(path + parentPathSegment)));
+                        Term pathTerm = newPathTerm(path + parentPathSegment);
+                        qs.add(createTermQueryViaSPI(pathTerm.field(), pathTerm.text()));
                     }
                 } else {
-                    qs.add(new TermQuery(newPathTerm(path)));
+                    Term pathTerm = newPathTerm(path);
+                    qs.add(createTermQueryViaSPI(pathTerm.field(), pathTerm.text()));
                 }
                 break;
             case PARENT:
@@ -1102,17 +1123,19 @@ public class LucenePropertyIndex extends FulltextIndex {
                     // there's no parent of the root node
                     // we add a path that can not possibly occur because there
                     // is no way to say "match no documents" in Lucene
-                    qs.add(new TermQuery(new Term(FieldNames.PATH, "///")));
+                    qs.add(createTermQueryViaSPI(FieldNames.PATH, "///"));
                 } else {
                     // For transformed paths, we can only add path restriction if absolute path to property can be
                     // deduced
                     if (planResult.isPathTransformed()) {
                         String parentPathSegment = planResult.getParentPathSegment();
                         if (!StreamUtils.toStream(PathUtils.elements(parentPathSegment)).anyMatch("*"::equals)) {
-                            qs.add(new TermQuery(newPathTerm(getParentPath(path) + parentPathSegment)));
+                            Term pathTerm = newPathTerm(getParentPath(path) + parentPathSegment);
+                            qs.add(createTermQueryViaSPI(pathTerm.field(), pathTerm.text()));
                         }
                     } else {
-                        qs.add(new TermQuery(newPathTerm(getParentPath(path))));
+                        Term pathTerm = newPathTerm(getParentPath(path));
+                        qs.add(createTermQueryViaSPI(pathTerm.field(), pathTerm.text()));
                     }
                 }
                 break;
@@ -1148,7 +1171,8 @@ public class LucenePropertyIndex extends FulltextIndex {
                 String first = pr.first.getValue(STRING);
                 first = first.replace("\\", "");
                 if (JCR_PATH.equals(name)) {
-                    qs.add(new TermQuery(newPathTerm(first)));
+                    Term pathTerm = newPathTerm(first);
+                    qs.add(createTermQueryViaSPI(pathTerm.field(), pathTerm.text()));
                     continue;
                 } else if ("*".equals(name)) {
                     //TODO Revisit reference constraint. For performant impl
@@ -1181,17 +1205,178 @@ public class LucenePropertyIndex extends FulltextIndex {
             // remove trailing "*" for prefix query
             first = first.substring(0, first.length() - 1);
             if (JCR_PATH.equals(name)) {
-                return new PrefixQuery(newPathTerm(first));
+                Term pathTerm = newPathTerm(first);
+                return createPrefixQueryViaSPI(pathTerm.field(), pathTerm.text());
             } else {
-                return new PrefixQuery(new Term(name, first));
+                return createPrefixQueryViaSPI(name, first);
             }
         } else {
             if (JCR_PATH.equals(name)) {
-                return new WildcardQuery(newPathTerm(first));
+                Term pathTerm = newPathTerm(first);
+                return createWildcardQueryViaSPI(pathTerm.field(), pathTerm.text());
             } else {
-                return new WildcardQuery(new Term(name, first));
+                return createWildcardQueryViaSPI(name, first);
             }
         }
+    }
+
+    /**
+     * Safely extracts the underlying Lucene query from an SPI Query.
+     * This method performs type checking to ensure safe casting.
+     *
+     * @param spiQuery the SPI query to extract from
+     * @return the underlying Lucene query
+     * @throws IllegalStateException if the query is not a Lucene47Query
+     */
+    private static org.apache.lucene.search.Query extractLuceneQuery(
+            org.apache.jackrabbit.oak.plugins.index.search.spi.Query spiQuery) {
+        if (!(spiQuery instanceof Lucene47Query)) {
+            throw new IllegalStateException(
+                "Expected Lucene47Query but got: " + spiQuery.getClass().getName());
+        }
+        return ((Lucene47Query) spiQuery).getLuceneQuery();
+    }
+
+    /**
+     * Creates a term query using the Search SPI abstraction.
+     * This enables version-agnostic query building for future Lucene 9 migration.
+     *
+     * @param field the field name
+     * @param value the term value
+     * @return a Lucene query created via SPI
+     */
+    private static org.apache.lucene.search.Query createTermQueryViaSPI(String field, String value) {
+        org.apache.jackrabbit.oak.plugins.index.search.spi.QueryBuilder builder =
+            LuceneIndexHelper.newQueryBuilder();
+        org.apache.jackrabbit.oak.plugins.index.search.spi.Query spiQuery =
+            builder.term(field, value);
+        // Extract the underlying Lucene query for use with existing code
+        return extractLuceneQuery(spiQuery);
+    }
+
+    /**
+     * Creates a range query using the Search SPI abstraction.
+     * This enables version-agnostic query building for future Lucene 9 migration.
+     *
+     * @param field the field name
+     * @param lowerValue lower bound (null for unbounded)
+     * @param upperValue upper bound (null for unbounded)
+     * @param includeLower whether to include lower bound
+     * @param includeUpper whether to include upper bound
+     * @return a Lucene query created via SPI
+     */
+    private static org.apache.lucene.search.Query createRangeQueryViaSPI(String field, String lowerValue, String upperValue,
+                                                boolean includeLower, boolean includeUpper) {
+        org.apache.jackrabbit.oak.plugins.index.search.spi.QueryBuilder builder =
+            LuceneIndexHelper.newQueryBuilder();
+        org.apache.jackrabbit.oak.plugins.index.search.spi.Query spiQuery =
+            builder.range(field, lowerValue, upperValue, includeLower, includeUpper);
+        // Extract the underlying Lucene query for use with existing code
+        return extractLuceneQuery(spiQuery);
+    }
+
+    /**
+     * Creates a prefix query using the Search SPI abstraction.
+     *
+     * @param field the field name
+     * @param value the prefix value
+     * @return a Lucene query created via SPI
+     */
+    private static org.apache.lucene.search.Query createPrefixQueryViaSPI(String field, String value) {
+        QueryBuilder builder = LuceneIndexHelper.newQueryBuilder();
+        org.apache.jackrabbit.oak.plugins.index.search.spi.Query spiQuery =
+            builder.prefix(field, value);
+        return extractLuceneQuery(spiQuery);
+    }
+
+    /**
+     * Creates a wildcard query using the Search SPI abstraction.
+     *
+     * @param field the field name
+     * @param pattern the wildcard pattern
+     * @return a Lucene query created via SPI
+     */
+    private static org.apache.lucene.search.Query createWildcardQueryViaSPI(String field, String pattern) {
+        QueryBuilder builder = LuceneIndexHelper.newQueryBuilder();
+        org.apache.jackrabbit.oak.plugins.index.search.spi.Query spiQuery =
+            builder.wildcard(field, pattern);
+        return extractLuceneQuery(spiQuery);
+    }
+
+    /**
+     * Creates a match-all query using the Search SPI abstraction.
+     *
+     * @return a Lucene query created via SPI
+     */
+    private static org.apache.lucene.search.Query createMatchAllQueryViaSPI() {
+        QueryBuilder builder = LuceneIndexHelper.newQueryBuilder();
+        org.apache.jackrabbit.oak.plugins.index.search.spi.Query spiQuery =
+            builder.matchAll();
+        return extractLuceneQuery(spiQuery);
+    }
+
+    /**
+     * Creates a boolean query builder using the Search SPI abstraction.
+     *
+     * @return a QueryBuilder.BooleanQueryBuilder for constructing boolean queries
+     */
+    private static QueryBuilder.BooleanQueryBuilder createBooleanQueryBuilder() {
+        QueryBuilder builder = LuceneIndexHelper.newQueryBuilder();
+        return builder.bool();
+    }
+
+    /**
+     * Creates a numeric range query for Long values using the Search SPI abstraction.
+     *
+     * @param field the field name
+     * @param min minimum value (null for unbounded)
+     * @param max maximum value (null for unbounded)
+     * @param minInclusive true if minimum is inclusive
+     * @param maxInclusive true if maximum is inclusive
+     * @return a Lucene query created via SPI
+     */
+    private static org.apache.lucene.search.Query createNumericRangeQueryViaSPI(String field, Long min, Long max,
+                                                                                  boolean minInclusive, boolean maxInclusive) {
+        QueryBuilder builder = LuceneIndexHelper.newQueryBuilder();
+        org.apache.jackrabbit.oak.plugins.index.search.spi.Query spiQuery =
+            builder.numericRange(field, min, max, minInclusive, maxInclusive);
+        return extractLuceneQuery(spiQuery);
+    }
+
+    /**
+     * Creates a numeric range query for Double values using the Search SPI abstraction.
+     *
+     * @param field the field name
+     * @param min minimum value (null for unbounded)
+     * @param max maximum value (null for unbounded)
+     * @param minInclusive true if minimum is inclusive
+     * @param maxInclusive true if maximum is inclusive
+     * @return a Lucene query created via SPI
+     */
+    private static org.apache.lucene.search.Query createNumericRangeQueryViaSPI(String field, Double min, Double max,
+                                                                                  boolean minInclusive, boolean maxInclusive) {
+        QueryBuilder builder = LuceneIndexHelper.newQueryBuilder();
+        org.apache.jackrabbit.oak.plugins.index.search.spi.Query spiQuery =
+            builder.numericRange(field, min, max, minInclusive, maxInclusive);
+        return extractLuceneQuery(spiQuery);
+    }
+
+    /**
+     * Creates a numeric range query for Integer values using the Search SPI abstraction.
+     *
+     * @param field the field name
+     * @param min minimum value (null for unbounded)
+     * @param max maximum value (null for unbounded)
+     * @param minInclusive true if minimum is inclusive
+     * @param maxInclusive true if maximum is inclusive
+     * @return a Lucene query created via SPI
+     */
+    private static org.apache.lucene.search.Query createNumericRangeQueryViaSPI(String field, Integer min, Integer max,
+                                                                                  boolean minInclusive, boolean maxInclusive) {
+        QueryBuilder builder = LuceneIndexHelper.newQueryBuilder();
+        org.apache.jackrabbit.oak.plugins.index.search.spi.Query spiQuery =
+            builder.numericRange(field, min, max, minInclusive, maxInclusive);
+        return extractLuceneQuery(spiQuery);
     }
 
     @Nullable
@@ -1200,13 +1385,15 @@ public class LucenePropertyIndex extends FulltextIndex {
         int propType = determinePropertyType(defn, pr);
 
         if (pr.isNullRestriction()) {
-            return new TermQuery(new Term(FieldNames.NULL_PROPS, defn.name));
+            // Use SPI for null property check queries
+            return createTermQueryViaSPI(FieldNames.NULL_PROPS, defn.name);
         }
 
         //If notNullCheckEnabled explicitly enabled use the simple TermQuery
         //otherwise later fallback to range query
         if (pr.isNotNullRestriction() && defn.notNullCheckEnabled) {
-            return new TermQuery(new Term(FieldNames.NOT_NULL_PROPS, defn.name));
+            // Use SPI for not-null property check queries
+            return createTermQueryViaSPI(FieldNames.NOT_NULL_PROPS, defn.name);
         }
 
         switch (propType) {
@@ -1217,32 +1404,37 @@ public class LucenePropertyIndex extends FulltextIndex {
                 if (pr.first != null && pr.first.equals(pr.last) && pr.firstIncluding
                         && pr.lastIncluding) {
                     // [property]=[value]
-                    return NumericRangeQuery.newLongRange(propertyName, first, first, true, true);
+                    return createNumericRangeQueryViaSPI(propertyName, first, first, true, true);
                 } else if (pr.first != null && pr.last != null) {
-                    return NumericRangeQuery.newLongRange(propertyName, first, last,
+                    return createNumericRangeQueryViaSPI(propertyName, first, last,
                             pr.firstIncluding, pr.lastIncluding);
                 } else if (pr.first != null && pr.last == null) {
                     // '>' & '>=' use cases
-                    return NumericRangeQuery.newLongRange(propertyName, first, null, pr.firstIncluding, true);
+                    return createNumericRangeQueryViaSPI(propertyName, first, null, pr.firstIncluding, true);
                 } else if (pr.last != null && !pr.last.equals(pr.first)) {
                     // '<' & '<='
-                    return NumericRangeQuery.newLongRange(propertyName, null, last, true, pr.lastIncluding);
+                    return createNumericRangeQueryViaSPI(propertyName, null, last, true, pr.lastIncluding);
                 } else if (pr.list != null) {
-                    BooleanQuery in = new BooleanQuery();
+                    QueryBuilder qb = LuceneIndexHelper.newQueryBuilder();
+                    QueryBuilder.BooleanQueryBuilder boolBuilder = qb.bool();
                     for (PropertyValue value : pr.list) {
                         Long dateVal = FieldFactory.dateToLong(value.getValue(Type.DATE));
-                        in.add(NumericRangeQuery.newLongRange(propertyName, dateVal, dateVal, true, true), BooleanClause.Occur.SHOULD);
+                        Query numQuery = createNumericRangeQueryViaSPI(propertyName, dateVal, dateVal, true, true);
+                        boolBuilder.should(qb.wrap(numQuery));
                     }
-                    return in;
+                    return extractLuceneQuery(boolBuilder.build());
                 } else if (pr.isNotNullRestriction()) {
                     // not null. As we are indexing generic dates which can be beyond epoch. So using complete numeric range
-                    return NumericRangeQuery.newLongRange(propertyName, Long.MIN_VALUE, Long.MAX_VALUE, true, true);
+                    return createNumericRangeQueryViaSPI(propertyName, Long.MIN_VALUE, Long.MAX_VALUE, true, true);
                 } else if (pr.isNot && pr.not != null) {
                     // -[property]=[value]
-                    BooleanQuery bool = new BooleanQuery();
+                    QueryBuilder qb = LuceneIndexHelper.newQueryBuilder();
+                    Query numQuery = createNumericRangeQueryViaSPI(propertyName, not, not, true, true);
                     // This will exclude entries with [property]=[value]
-                    bool.add(NumericRangeQuery.newLongRange(propertyName, not, not, true, true), MUST_NOT);
-                    return bool;
+                    org.apache.jackrabbit.oak.plugins.index.search.spi.Query boolQuery = qb.bool()
+                        .mustNot(qb.wrap(numQuery))
+                        .build();
+                    return extractLuceneQuery(boolQuery);
                 }
 
                 break;
@@ -1253,32 +1445,38 @@ public class LucenePropertyIndex extends FulltextIndex {
                 if (pr.first != null && pr.first.equals(pr.last) && pr.firstIncluding
                         && pr.lastIncluding) {
                     // [property]=[value]
-                    return NumericRangeQuery.newDoubleRange(propertyName, first, first, true, true);
+                    return createNumericRangeQueryViaSPI(propertyName, first, first, true, true);
                 } else if (pr.first != null && pr.last != null) {
-                    return NumericRangeQuery.newDoubleRange(propertyName, first, last,
+                    return createNumericRangeQueryViaSPI(propertyName, first, last,
                             pr.firstIncluding, pr.lastIncluding);
                 } else if (pr.first != null && pr.last == null) {
                     // '>' & '>=' use cases
-                    return NumericRangeQuery.newDoubleRange(propertyName, first, null, pr.firstIncluding, true);
+                    return createNumericRangeQueryViaSPI(propertyName, first, null, pr.firstIncluding, true);
                 } else if (pr.last != null && !pr.last.equals(pr.first)) {
                     // '<' & '<='
-                    return NumericRangeQuery.newDoubleRange(propertyName, null, last, true, pr.lastIncluding);
+                    return createNumericRangeQueryViaSPI(propertyName, null, last, true, pr.lastIncluding);
                 } else if (pr.list != null) {
-                    BooleanQuery in = new BooleanQuery();
+                    QueryBuilder qb = LuceneIndexHelper.newQueryBuilder();
+                    QueryBuilder.BooleanQueryBuilder boolBuilder = qb.bool();
                     for (PropertyValue value : pr.list) {
                         Double doubleVal = value.getValue(DOUBLE);
-                        in.add(NumericRangeQuery.newDoubleRange(propertyName, doubleVal, doubleVal, true, true), BooleanClause.Occur.SHOULD);
+                        Query numQuery = createNumericRangeQueryViaSPI(propertyName, doubleVal, doubleVal, true, true);
+                        boolBuilder.should(qb.wrap(numQuery));
                     }
-                    return in;
+                    return extractLuceneQuery(boolBuilder.build());
                 } else if (pr.isNotNullRestriction()) {
                     // not null.
-                    return NumericRangeQuery.newDoubleRange(propertyName, Double.MIN_VALUE, Double.MAX_VALUE, true, true);
+                    return createNumericRangeQueryViaSPI(propertyName, Double.MIN_VALUE, Double.MAX_VALUE, true, true);
                 } else if (pr.isNot && pr.not != null) {
                     // -[property]=[value]
-                    BooleanQuery bool = new BooleanQuery();
+                    QueryBuilder qb = LuceneIndexHelper.newQueryBuilder();
+                    Double notVal = pr.not.getValue(DOUBLE);
+                    Query numQuery = createNumericRangeQueryViaSPI(propertyName, notVal, notVal, true, true);
                     // This will exclude entries with [property]=[value]
-                    bool.add(NumericRangeQuery.newDoubleRange(propertyName, pr.not.getValue(DOUBLE), pr.not.getValue(DOUBLE), true, true), MUST_NOT);
-                    return bool;
+                    org.apache.jackrabbit.oak.plugins.index.search.spi.Query boolQuery = qb.bool()
+                        .mustNot(qb.wrap(numQuery))
+                        .build();
+                    return extractLuceneQuery(boolQuery);
                 }
                 break;
             }
@@ -1288,32 +1486,38 @@ public class LucenePropertyIndex extends FulltextIndex {
                 if (pr.first != null && pr.first.equals(pr.last) && pr.firstIncluding
                         && pr.lastIncluding) {
                     // [property]=[value]
-                    return NumericRangeQuery.newLongRange(propertyName, first, first, true, true);
+                    return createNumericRangeQueryViaSPI(propertyName, first, first, true, true);
                 } else if (pr.first != null && pr.last != null) {
-                    return NumericRangeQuery.newLongRange(propertyName, first, last,
+                    return createNumericRangeQueryViaSPI(propertyName, first, last,
                             pr.firstIncluding, pr.lastIncluding);
                 } else if (pr.first != null && pr.last == null) {
                     // '>' & '>=' use cases
-                    return NumericRangeQuery.newLongRange(propertyName, first, null, pr.firstIncluding, true);
+                    return createNumericRangeQueryViaSPI(propertyName, first, null, pr.firstIncluding, true);
                 } else if (pr.last != null && !pr.last.equals(pr.first)) {
                     // '<' & '<='
-                    return NumericRangeQuery.newLongRange(propertyName, null, last, true, pr.lastIncluding);
+                    return createNumericRangeQueryViaSPI(propertyName, null, last, true, pr.lastIncluding);
                 } else if (pr.list != null) {
-                    BooleanQuery in = new BooleanQuery();
+                    QueryBuilder qb = LuceneIndexHelper.newQueryBuilder();
+                    QueryBuilder.BooleanQueryBuilder boolBuilder = qb.bool();
                     for (PropertyValue value : pr.list) {
                         Long longVal = value.getValue(LONG);
-                        in.add(NumericRangeQuery.newLongRange(propertyName, longVal, longVal, true, true), BooleanClause.Occur.SHOULD);
+                        Query numQuery = createNumericRangeQueryViaSPI(propertyName, longVal, longVal, true, true);
+                        boolBuilder.should(qb.wrap(numQuery));
                     }
-                    return in;
+                    return extractLuceneQuery(boolBuilder.build());
                 } else if (pr.isNotNullRestriction()) {
                     // not null.
-                    return NumericRangeQuery.newLongRange(propertyName, Long.MIN_VALUE, Long.MAX_VALUE, true, true);
+                    return createNumericRangeQueryViaSPI(propertyName, Long.MIN_VALUE, Long.MAX_VALUE, true, true);
                 } else if (pr.isNot && pr.not != null) {
                     // -[property]=[value]
-                    BooleanQuery bool = new BooleanQuery();
+                    QueryBuilder qb = LuceneIndexHelper.newQueryBuilder();
+                    Long notVal = pr.not.getValue(LONG);
+                    Query numQuery = createNumericRangeQueryViaSPI(propertyName, notVal, notVal, true, true);
                     // This will exclude entries with [property]=[value]
-                    bool.add(NumericRangeQuery.newLongRange(propertyName, pr.not.getValue(LONG), pr.not.getValue(LONG), true, true), MUST_NOT);
-                    return bool;
+                    org.apache.jackrabbit.oak.plugins.index.search.spi.Query boolQuery = qb.bool()
+                        .mustNot(qb.wrap(numQuery))
+                        .build();
+                    return extractLuceneQuery(boolQuery);
                 }
                 break;
             }
@@ -1327,32 +1531,40 @@ public class LucenePropertyIndex extends FulltextIndex {
                 String last = pr.last != null ? pr.last.getValue(STRING) : null;
                 if (pr.first != null && pr.first.equals(pr.last) && pr.firstIncluding
                         && pr.lastIncluding) {
-                    // [property]=[value]
-                    return new TermQuery(new Term(propertyName, first));
+                    // [property]=[value] - Use SPI for exact match term queries
+                    return createTermQueryViaSPI(propertyName, first);
                 } else if (pr.first != null && pr.last != null) {
-                    return TermRangeQuery.newStringRange(propertyName, first, last,
+                    // Use SPI for bounded range queries
+                    return createRangeQueryViaSPI(propertyName, first, last,
                             pr.firstIncluding, pr.lastIncluding);
                 } else if (pr.first != null && pr.last == null) {
-                    // '>' & '>=' use cases
-                    return TermRangeQuery.newStringRange(propertyName, first, null, pr.firstIncluding, true);
+                    // '>' & '>=' use cases - Use SPI for lower-bounded range
+                    return createRangeQueryViaSPI(propertyName, first, null, pr.firstIncluding, true);
                 } else if (pr.last != null && !pr.last.equals(pr.first)) {
-                    // '<' & '<='
-                    return TermRangeQuery.newStringRange(propertyName, null, last, true, pr.lastIncluding);
+                    // '<' & '<=' - Use SPI for upper-bounded range
+                    return createRangeQueryViaSPI(propertyName, null, last, true, pr.lastIncluding);
                 } else if (pr.list != null) {
-                    BooleanQuery in = new BooleanQuery();
+                    QueryBuilder qb = LuceneIndexHelper.newQueryBuilder();
+                    QueryBuilder.BooleanQueryBuilder boolBuilder = qb.bool();
                     for (PropertyValue value : pr.list) {
                         String strVal = value.getValue(STRING);
-                        in.add(new TermQuery(new Term(propertyName, strVal)), BooleanClause.Occur.SHOULD);
+                        // Use SPI for each term in the IN clause
+                        Query termQuery = createTermQueryViaSPI(propertyName, strVal);
+                        boolBuilder.should(qb.wrap(termQuery));
                     }
-                    return in;
+                    return extractLuceneQuery(boolBuilder.build());
                 } else if (pr.isNotNullRestriction()) {
-                    return new TermRangeQuery(propertyName, null, null, true, true);
+                    // Use SPI for unbounded range (matches all non-null values)
+                    return createRangeQueryViaSPI(propertyName, null, null, true, true);
                 } else if (pr.isNot && pr.not != null) {
                     // -[property]=[value]
-                    BooleanQuery bool = new BooleanQuery();
-                    // This will exclude entries with [property]=[value]
-                    bool.add(new TermQuery(new Term(propertyName, pr.not.getValue(STRING))), MUST_NOT);
-                    return bool;
+                    QueryBuilder qb = LuceneIndexHelper.newQueryBuilder();
+                    Query termQuery = createTermQueryViaSPI(propertyName, pr.not.getValue(STRING));
+                    // This will exclude entries with [property]=[value] - Use SPI
+                    org.apache.jackrabbit.oak.plugins.index.search.spi.Query boolQuery = qb.bool()
+                        .mustNot(qb.wrap(termQuery))
+                        .build();
+                    return extractLuceneQuery(boolQuery);
                 }
             }
         }
@@ -1372,7 +1584,7 @@ public class LucenePropertyIndex extends FulltextIndex {
         if (pr.first != null && pr.first.equals(pr.last) && pr.firstIncluding
                 && pr.lastIncluding) {
             // [property]=[value]
-            return new TermQuery(new Term(FieldNames.NODE_NAME, first));
+            return createTermQueryViaSPI(FieldNames.NODE_NAME, first);
         }
 
         if (pr.isLike) {
@@ -1386,39 +1598,47 @@ public class LucenePropertyIndex extends FulltextIndex {
                                                IndexReader reader) {
         if (reader == null) {
             // getPlan call
-            qs.add(new TermQuery(new Term("*", uuid)));
+            qs.add(createTermQueryViaSPI("*", uuid));
             return;
         }
 
         // reference query
-        BooleanQuery bq = new BooleanQuery();
+        QueryBuilder qb = LuceneIndexHelper.newQueryBuilder();
+        QueryBuilder.BooleanQueryBuilder boolBuilder = qb.bool();
         Collection<String> fields = MultiFields.getIndexedFields(reader);
         for (String f : fields) {
-            bq.add(new TermQuery(new Term(f, uuid)), SHOULD);
+            Query termQuery = createTermQueryViaSPI(f, uuid);
+            boolBuilder.should(qb.wrap(termQuery));
         }
-        qs.add(bq);
+        qs.add(extractLuceneQuery(boolBuilder.build()));
     }
 
     private static void addNodeTypeConstraints(IndexingRule defn, List<Query> qs, Filter filter) {
-        BooleanQuery bq = new BooleanQuery();
+        QueryBuilder qb = LuceneIndexHelper.newQueryBuilder();
+        QueryBuilder.BooleanQueryBuilder boolBuilder = qb.bool();
         PropertyDefinition primaryType = defn.getConfig(JCR_PRIMARYTYPE);
         //TODO OAK-2198 Add proper nodeType query support
 
+        int clauseCount = 0;
         if (primaryType != null && primaryType.propertyIndex) {
             for (String type : filter.getPrimaryTypes()) {
-                bq.add(new TermQuery(new Term(JCR_PRIMARYTYPE, type)), SHOULD);
+                Query termQuery = createTermQueryViaSPI(JCR_PRIMARYTYPE, type);
+                boolBuilder.should(qb.wrap(termQuery));
+                clauseCount++;
             }
         }
 
         PropertyDefinition mixinType = defn.getConfig(JCR_MIXINTYPES);
         if (mixinType != null && mixinType.propertyIndex) {
             for (String type : filter.getMixinTypes()) {
-                bq.add(new TermQuery(new Term(JCR_MIXINTYPES, type)), SHOULD);
+                Query termQuery = createTermQueryViaSPI(JCR_MIXINTYPES, type);
+                boolBuilder.should(qb.wrap(termQuery));
+                clauseCount++;
             }
         }
 
-        if (bq.clauses().size() != 0) {
-            qs.add(bq);
+        if (clauseCount != 0) {
+            qs.add(extractLuceneQuery(boolBuilder.build()));
         }
     }
 
@@ -1438,18 +1658,20 @@ public class LucenePropertyIndex extends FulltextIndex {
 
             @Override
             public boolean visit(FullTextOr or) {
-                BooleanQuery q = new BooleanQuery();
+                QueryBuilder qb = LuceneIndexHelper.newQueryBuilder();
+                QueryBuilder.BooleanQueryBuilder boolBuilder = qb.bool();
                 for (FullTextExpression e : or.list) {
                     Query x = getFullTextQuery(plan, e, analyzer, augmentor);
-                    q.add(x, SHOULD);
+                    boolBuilder.should(qb.wrap(x));
                 }
-                result.set(q);
+                result.set(extractLuceneQuery(boolBuilder.build()));
                 return true;
             }
 
             @Override
             public boolean visit(FullTextAnd and) {
-                BooleanQuery q = new BooleanQuery();
+                QueryBuilder qb = LuceneIndexHelper.newQueryBuilder();
+                QueryBuilder.BooleanQueryBuilder boolBuilder = qb.bool();
                 for (FullTextExpression e : and.list) {
                     Query x = getFullTextQuery(plan, e, analyzer, augmentor);
                     /* Only unwrap the clause if MUST_NOT(x) */
@@ -1459,15 +1681,16 @@ public class LucenePropertyIndex extends FulltextIndex {
                         if ((bq.getClauses().length == 1) &&
                                 (bq.getClauses()[0].getOccur() == BooleanClause.Occur.MUST_NOT)) {
                             hasMustNot = true;
-                            q.add(bq.getClauses()[0]);
+                            // Add the MUST_NOT clause directly
+                            boolBuilder.mustNot(qb.wrap(bq.getClauses()[0].getQuery()));
                         }
                     }
 
                     if (!hasMustNot) {
-                        q.add(x, MUST);
+                        boolBuilder.must(qb.wrap(x));
                     }
                 }
-                result.set(q);
+                result.set(extractLuceneQuery(boolBuilder.build()));
                 return true;
             }
 
@@ -1494,9 +1717,11 @@ public class LucenePropertyIndex extends FulltextIndex {
                     q.setBoost(Float.parseFloat(boost));
                 }
                 if (not) {
-                    BooleanQuery bq = new BooleanQuery();
-                    bq.add(q, MUST_NOT);
-                    result.set(bq);
+                    QueryBuilder qb = LuceneIndexHelper.newQueryBuilder();
+                    org.apache.jackrabbit.oak.plugins.index.search.spi.Query bq = qb.bool()
+                        .mustNot(qb.wrap(q))
+                        .build();
+                    result.set(extractLuceneQuery(bq));
                 } else {
                     result.set(q);
                 }
@@ -1539,24 +1764,26 @@ public class LucenePropertyIndex extends FulltextIndex {
         //Expand the query on fulltext field
         if (FieldNames.FULLTEXT.equals(fieldName) &&
                 !indexingRule.getNodeScopeAnalyzedProps().isEmpty()) {
-            BooleanQuery in = new BooleanQuery();
+            QueryBuilder qb = LuceneIndexHelper.newQueryBuilder();
+            QueryBuilder.BooleanQueryBuilder boolBuilder = qb.bool();
             for (PropertyDefinition pd : indexingRule.getNodeScopeAnalyzedProps()) {
                 Query q = tokenToQuery(text, FieldNames.createAnalyzedFieldName(pd.name), analyzer);
                 q.setBoost(pd.boost);
-                in.add(q, BooleanClause.Occur.SHOULD);
+                boolBuilder.should(qb.wrap(q));
             }
 
             //Add the query for actual fulltext field also. That query would
             //not be boosted
-            in.add(tokenToQuery(text, fieldName, analyzer), BooleanClause.Occur.SHOULD);
-            ret = in;
+            Query fulltextQuery = tokenToQuery(text, fieldName, analyzer);
+            boolBuilder.should(qb.wrap(fulltextQuery));
+            ret = extractLuceneQuery(boolBuilder.build());
         } else {
             ret = tokenToQuery(text, fieldName, analyzer);
         }
 
         //Augment query terms if available (as a 'SHOULD' clause)
         if (FieldNames.FULLTEXT.equals(fieldName)) {
-            Query subQuery = new BooleanQuery();
+            Query subQuery = null;
             if (pr.indexDefinition.isDynamicBoostLiteEnabled()) {
                 subQuery = tokenToQuery(text, FieldNames.SIMILARITY_TAGS, analyzer);
                 // De-boosting dynamic boost based query so other clauses will have more relevance
@@ -1566,12 +1793,13 @@ public class LucenePropertyIndex extends FulltextIndex {
             }
 
             if (subQuery != null) {
-                BooleanQuery query = new BooleanQuery();
+                QueryBuilder qb = LuceneIndexHelper.newQueryBuilder();
+                org.apache.jackrabbit.oak.plugins.index.search.spi.Query query = qb.bool()
+                    .should(qb.wrap(ret))
+                    .should(qb.wrap(subQuery))
+                    .build();
 
-                query.add(ret, BooleanClause.Occur.SHOULD);
-                query.add(subQuery, BooleanClause.Occur.SHOULD);
-
-                ret = query;
+                ret = extractLuceneQuery(query);
             }
         }
 
@@ -1597,7 +1825,7 @@ public class LucenePropertyIndex extends FulltextIndex {
 
     private static Query newDepthQuery(String path, PlanResult planResult) {
         int depth = PathUtils.getDepth(path) + planResult.getParentDepth() + 1;
-        return NumericRangeQuery.newIntRange(FieldNames.PATH_DEPTH, depth, depth, true, true);
+        return createNumericRangeQueryViaSPI(FieldNames.PATH_DEPTH, depth, depth, true, true);
     }
 
     @SuppressWarnings("Guava")

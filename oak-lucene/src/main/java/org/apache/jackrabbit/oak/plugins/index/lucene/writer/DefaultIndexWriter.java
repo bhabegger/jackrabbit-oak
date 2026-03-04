@@ -34,6 +34,7 @@ import org.apache.jackrabbit.oak.commons.PerfLogger;
 import org.apache.jackrabbit.oak.commons.pio.Closer;
 import org.apache.jackrabbit.oak.plugins.index.lucene.LuceneIndexDefinition;
 import org.apache.jackrabbit.oak.plugins.index.lucene.directory.DirectoryFactory;
+import org.apache.jackrabbit.oak.plugins.index.lucene.spi.Lucene47IndexWriter;
 import org.apache.jackrabbit.oak.plugins.index.lucene.util.SuggestHelper;
 import org.apache.jackrabbit.oak.plugins.index.search.FieldNames;
 import org.apache.jackrabbit.oak.plugins.index.search.IndexDefinition;
@@ -42,7 +43,6 @@ import org.apache.jackrabbit.util.ISO8601;
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.index.DirectoryReader;
 import org.apache.lucene.index.IndexCommit;
-import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.index.IndexableField;
 import org.apache.lucene.search.PrefixQuery;
@@ -63,7 +63,7 @@ class DefaultIndexWriter implements LuceneIndexWriter {
     private final String suggestDirName;
     private final boolean reindex;
     private final LuceneIndexWriterConfig writerConfig;
-    private volatile IndexWriter writer;
+    private volatile org.apache.jackrabbit.oak.plugins.index.search.spi.IndexWriter writer;
     private Directory directory;
     private long genAtStart = -1;
     private boolean indexUpdated = false;
@@ -90,14 +90,14 @@ class DefaultIndexWriter implements LuceneIndexWriter {
             if (containsOnlyPath && isPropertyRegexMatchingEnabled) {
                 return;
             }
-            getWriter().addDocument(doc);
+            getNativeWriter().addDocument(doc);
         } else {
             // if the new document only contains path field, we don't add it to index. Instead we delete existing
             // document of the same path.
             if (containsOnlyPath && isPropertyRegexMatchingEnabled) {
-                getWriter().deleteDocuments(newPathTerm(path));
+                getNativeWriter().deleteDocuments(newPathTerm(path));
             } else {
-                getWriter().updateDocument(newPathTerm(path), doc);
+                getNativeWriter().updateDocument(newPathTerm(path), doc);
             }
         }
         indexUpdated = true;
@@ -105,12 +105,12 @@ class DefaultIndexWriter implements LuceneIndexWriter {
 
     @Override
     public void deleteDocuments(String path) throws IOException {
-        getWriter().deleteDocuments(newPathTerm(path));
-        getWriter().deleteDocuments(new PrefixQuery(newPathTerm(path + "/")));
+        getNativeWriter().deleteDocuments(newPathTerm(path));
+        getNativeWriter().deleteDocuments(new PrefixQuery(newPathTerm(path + "/")));
     }
 
     void deleteAll() throws IOException {
-        getWriter().deleteAll();
+        getNativeWriter().deleteAll();
         indexUpdated = true;
     }
 
@@ -134,13 +134,13 @@ class DefaultIndexWriter implements LuceneIndexWriter {
 
         if (writer != null) {
             if (log.isTraceEnabled()) {
-                trackIndexSizeInfo(writer, definition, directory);
+                trackIndexSizeInfo(getNativeWriter(), definition, directory);
             }
 
             final long start = PERF_LOGGER.start();
 
             if (updateSuggestions) {
-                indexUpdated |= updateSuggester(writer.getAnalyzer(), currentTime);
+                indexUpdated |= updateSuggester(getNativeWriter().getAnalyzer(), currentTime);
                 PERF_LOGGER.end(start, -1, "Completed suggester for directory {}", definition);
             }
 
@@ -160,8 +160,8 @@ class DefaultIndexWriter implements LuceneIndexWriter {
 
     //~----------------------------------------< internal >
     // in order to support parallel indexing, also for better performance. use localRef as below which reference from: https://en.wikipedia.org/wiki/Double-checked_locking
-    IndexWriter getWriter() throws IOException {
-        IndexWriter localRefWriter = writer;
+    org.apache.jackrabbit.oak.plugins.index.search.spi.IndexWriter getWriter() throws IOException {
+        org.apache.jackrabbit.oak.plugins.index.search.spi.IndexWriter localRefWriter = writer;
         if (localRefWriter == null) {
             synchronized (this) {
                 localRefWriter = writer;
@@ -171,7 +171,7 @@ class DefaultIndexWriter implements LuceneIndexWriter {
                     boolean serialScheduler = directoryFactory.remoteDirectory();
                     IndexWriterConfig config = getIndexWriterConfig(definition, serialScheduler, writerConfig);
                     config.setMergePolicy(definition.getMergePolicy());
-                    writer = localRefWriter = new IndexWriter(directory, config);
+                    writer = localRefWriter = new Lucene47IndexWriter(directory, config);
                     genAtStart = getLatestGeneration(directory);
                     log.debug("Creating writer for index: {}. Config: {}", definition.getIndexPath(), config);
                     PERF_LOGGER.end(start, -1, "Created IndexWriter for directory {}", definition);
@@ -179,6 +179,26 @@ class DefaultIndexWriter implements LuceneIndexWriter {
             }
         }
         return localRefWriter;
+    }
+
+    /**
+     * Returns the native Lucene IndexWriter for operations not yet abstracted in SPI.
+     * This provides access to Lucene-specific operations like deleteDocuments(Query),
+     * getAnalyzer(), numDocs(), and deleteAll().
+     *
+     * <p>Package-private for testing and internal use.</p>
+     *
+     * @return the native Lucene IndexWriter
+     * @throws IOException if the writer cannot be created
+     * @throws IllegalStateException if the SPI writer is not a Lucene47IndexWriter
+     */
+    org.apache.lucene.index.IndexWriter getNativeWriter() throws IOException {
+        org.apache.jackrabbit.oak.plugins.index.search.spi.IndexWriter spiWriter = getWriter();
+        if (!(spiWriter instanceof Lucene47IndexWriter)) {
+            throw new IllegalStateException(
+                "Expected Lucene47IndexWriter but got: " + spiWriter.getClass().getName());
+        }
+        return ((Lucene47IndexWriter) spiWriter).getLuceneWriter();
     }
 
     /**
@@ -192,7 +212,7 @@ class DefaultIndexWriter implements LuceneIndexWriter {
             final Closer closer = Closer.create();
 
             NodeBuilder suggesterStatus = definitionBuilder.child(suggestDirName);
-            DirectoryReader reader = closer.register(DirectoryReader.open(writer, false));
+            DirectoryReader reader = closer.register(DirectoryReader.open(getNativeWriter(), false));
             final Directory suggestDirectory = directoryFactory.newInstance(definition, definitionBuilder, suggestDirName, false);
             // updateSuggester would close the directory (directly or via lookup)
             // closer.register(suggestDirectory);
@@ -267,7 +287,7 @@ class DefaultIndexWriter implements LuceneIndexWriter {
         return -1;
     }
 
-    private static void trackIndexSizeInfo(@NotNull IndexWriter writer,
+    private static void trackIndexSizeInfo(@NotNull org.apache.lucene.index.IndexWriter writer,
                                            @NotNull IndexDefinition definition,
                                            @NotNull Directory directory) throws IOException {
         requireNonNull(writer);
