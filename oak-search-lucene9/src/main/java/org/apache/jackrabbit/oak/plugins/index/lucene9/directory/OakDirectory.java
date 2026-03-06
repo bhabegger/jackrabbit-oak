@@ -38,18 +38,23 @@ import static org.apache.jackrabbit.oak.plugins.memory.PropertyStates.createProp
 /**
  * Lucene 9 Directory implementation that stores index files in Oak repository.
  * Files are stored under /var/indexing/lucene9/{indexName}/ node structure.
+ * Uses chunked blob storage for memory efficiency.
  */
 public class OakDirectory extends Directory {
 
-    private static final String PROP_DIR_LISTING = "dirListing";
+    static final String PROP_DIR_LISTING = "dirListing";
+    static final String PROP_BLOB_SIZE = "blobSize";
+
     private static final String VAR_NODE = "var";
     private static final String INDEXING_NODE = "indexing";
     private static final String LUCENE9_NODE = "lucene9";
 
+    private final NodeBuilder root;
     private final NodeBuilder directoryBuilder;
     private final String indexName;
     private final Set<String> fileNames;
     private final boolean readOnly;
+    private final BlobFactory blobFactory;
 
     /**
      * Creates a new OakDirectory instance.
@@ -59,8 +64,10 @@ public class OakDirectory extends Directory {
      * @param readOnly whether this directory is read-only
      */
     public OakDirectory(NodeBuilder root, String indexName, boolean readOnly) {
+        this.root = root;
         this.indexName = indexName;
         this.readOnly = readOnly;
+        this.blobFactory = BlobFactory.getNodeBuilderBlobFactory(root);
 
         // Auto-create /var/indexing/lucene9/{indexName} structure
         NodeBuilder var = root.child(VAR_NODE);
@@ -98,11 +105,8 @@ public class OakDirectory extends Directory {
         if (!file.exists()) {
             throw new FileNotFoundException(String.format("[%s] %s", indexName, name));
         }
-        OakIndexInput input = new OakIndexInput(name, file);
-        try {
+        try (OakIndexInput input = new OakIndexInput(name, file, indexName, blobFactory)) {
             return input.length();
-        } finally {
-            input.close();
         }
     }
 
@@ -118,8 +122,11 @@ public class OakDirectory extends Directory {
         }
 
         NodeBuilder file = directoryBuilder.child(name);
+        // Set blob size (chunk size)
+        file.setProperty(PROP_BLOB_SIZE, (long) OakBufferedIndexFile.DEFAULT_BLOB_SIZE);
+
         fileNames.add(name);
-        return new OakIndexOutput(name, file);
+        return new OakIndexOutput(name, file, indexName, blobFactory);
     }
 
     @Override
@@ -166,7 +173,7 @@ public class OakDirectory extends Directory {
         if (!file.exists()) {
             throw new FileNotFoundException(String.format("[%s] %s", indexName, name));
         }
-        return new OakIndexInput(name, file);
+        return new OakIndexInput(name, file, indexName, blobFactory);
     }
 
     @Override

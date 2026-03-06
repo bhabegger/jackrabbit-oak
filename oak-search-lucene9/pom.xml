@@ -53,6 +53,11 @@
             <artifactId>oak-api</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <dependency>
+            <groupId>org.apache.jackrabbit</groupId>
+            <artifactId>oak-commons</artifactId>
+            <version>${project.version}</version>
+        </dependency>
 
         <!-- Lucene 9 Dependencies -->
         <dependency>
