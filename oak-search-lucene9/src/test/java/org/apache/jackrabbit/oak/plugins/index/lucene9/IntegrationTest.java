@@ -75,33 +75,38 @@ public class IntegrationTest {
         assertNotNull("Editor should be created", editor);
 
         // Simulate indexing by traversing tree
-        editor.enter(EMPTY_NODE, root);
+        // Use try-finally to ensure IndexWriter is closed even if test fails
+        try {
+            editor.enter(EMPTY_NODE, root);
 
-        // Index content node
-        Editor contentEditor = editor.childNodeAdded("content", content.getNodeState());
-        assertNotNull("Content editor should be created", contentEditor);
-        contentEditor.enter(EMPTY_NODE, content.getNodeState());
+            // Index content node
+            Editor contentEditor = editor.childNodeAdded("content", content.getNodeState());
+            assertNotNull("Content editor should be created", contentEditor);
+            contentEditor.enter(EMPTY_NODE, content.getNodeState());
 
-        // Index article1
-        Editor article1Editor = contentEditor.childNodeAdded("article1", article1.getNodeState());
-        assertNotNull("Article1 editor should be created", article1Editor);
-        article1Editor.enter(EMPTY_NODE, article1.getNodeState());
-        article1Editor.leave(EMPTY_NODE, article1.getNodeState());
+            // Index article1
+            Editor article1Editor = contentEditor.childNodeAdded("article1", article1.getNodeState());
+            assertNotNull("Article1 editor should be created", article1Editor);
+            article1Editor.enter(EMPTY_NODE, article1.getNodeState());
+            article1Editor.leave(EMPTY_NODE, article1.getNodeState());
 
-        // Index article2
-        Editor article2Editor = contentEditor.childNodeAdded("article2", article2.getNodeState());
-        assertNotNull("Article2 editor should be created", article2Editor);
-        article2Editor.enter(EMPTY_NODE, article2.getNodeState());
-        article2Editor.leave(EMPTY_NODE, article2.getNodeState());
+            // Index article2
+            Editor article2Editor = contentEditor.childNodeAdded("article2", article2.getNodeState());
+            assertNotNull("Article2 editor should be created", article2Editor);
+            article2Editor.enter(EMPTY_NODE, article2.getNodeState());
+            article2Editor.leave(EMPTY_NODE, article2.getNodeState());
 
-        // Index article3
-        Editor article3Editor = contentEditor.childNodeAdded("article3", article3.getNodeState());
-        assertNotNull("Article3 editor should be created", article3Editor);
-        article3Editor.enter(EMPTY_NODE, article3.getNodeState());
-        article3Editor.leave(EMPTY_NODE, article3.getNodeState());
+            // Index article3
+            Editor article3Editor = contentEditor.childNodeAdded("article3", article3.getNodeState());
+            assertNotNull("Article3 editor should be created", article3Editor);
+            article3Editor.enter(EMPTY_NODE, article3.getNodeState());
+            article3Editor.leave(EMPTY_NODE, article3.getNodeState());
 
-        contentEditor.leave(EMPTY_NODE, content.getNodeState());
-        editor.leave(EMPTY_NODE, root);
+            contentEditor.leave(EMPTY_NODE, content.getNodeState());
+        } finally {
+            // Ensure cleanup even if test fails
+            editor.leave(EMPTY_NODE, root);
+        }
 
         // Verify index was created - check for index storage structure
         // Index files are stored under the index definition at /var/indexing/lucene9/{indexName}
@@ -156,24 +161,29 @@ public class IntegrationTest {
         assertNotNull("Editor should be created", editor);
 
         // Simulate indexing
-        editor.enter(EMPTY_NODE, root);
+        // Use try-finally to ensure IndexWriter is closed even if test fails
+        try {
+            editor.enter(EMPTY_NODE, root);
 
-        Editor contentEditor = editor.childNodeAdded("content", content.getNodeState());
-        assertNotNull("Content editor should be created", contentEditor);
-        contentEditor.enter(EMPTY_NODE, content.getNodeState());
+            Editor contentEditor = editor.childNodeAdded("content", content.getNodeState());
+            assertNotNull("Content editor should be created", contentEditor);
+            contentEditor.enter(EMPTY_NODE, content.getNodeState());
 
-        // Index all 100 nodes
-        for (int i = 0; i < 100; i++) {
-            String nodeName = "node" + i;
-            NodeBuilder node = content.child(nodeName);
-            Editor nodeEditor = contentEditor.childNodeAdded(nodeName, node.getNodeState());
-            assertNotNull("Node editor should be created for " + nodeName, nodeEditor);
-            nodeEditor.enter(EMPTY_NODE, node.getNodeState());
-            nodeEditor.leave(EMPTY_NODE, node.getNodeState());
+            // Index all 100 nodes
+            for (int i = 0; i < 100; i++) {
+                String nodeName = "node" + i;
+                NodeBuilder node = content.child(nodeName);
+                Editor nodeEditor = contentEditor.childNodeAdded(nodeName, node.getNodeState());
+                assertNotNull("Node editor should be created for " + nodeName, nodeEditor);
+                nodeEditor.enter(EMPTY_NODE, node.getNodeState());
+                nodeEditor.leave(EMPTY_NODE, node.getNodeState());
+            }
+
+            contentEditor.leave(EMPTY_NODE, content.getNodeState());
+        } finally {
+            // Ensure cleanup even if test fails
+            editor.leave(EMPTY_NODE, root);
         }
-
-        contentEditor.leave(EMPTY_NODE, content.getNodeState());
-        editor.leave(EMPTY_NODE, root);
 
         // Verify chunked storage was used - check for data nodes with children
         // Index files are stored under the index definition at /var/indexing/lucene9/{indexName}
