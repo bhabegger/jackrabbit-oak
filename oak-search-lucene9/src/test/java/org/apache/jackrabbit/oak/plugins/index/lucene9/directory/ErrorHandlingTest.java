@@ -58,13 +58,10 @@ public class ErrorHandlingTest {
         // Attempt to read should throw IOException
         byte[] readData = new byte[100];
         try {
-            indexFile.seek(0);
             indexFile.readBytes(readData, 0, 100);
-            fail("Expected IOException when reading from closed file");
-        } catch (Exception e) {
-            // Expected - could be IOException or NullPointerException depending on implementation
-            assertTrue("Exception should be thrown when reading from closed file",
-                e instanceof IOException || e instanceof NullPointerException);
+            fail("Should throw IOException for closed file");
+        } catch (IOException e) {
+            // Expected - file is closed
         }
     }
 
