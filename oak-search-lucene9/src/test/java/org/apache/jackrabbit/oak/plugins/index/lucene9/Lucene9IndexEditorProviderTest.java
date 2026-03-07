@@ -62,16 +62,13 @@ public class Lucene9IndexEditorProviderTest {
     }
 
     @Test
-    public void testGetEditorReturnsNullForNow() throws Exception {
-        // Note: Full editor implementation comes in Task 7
-        // For now, we just test that the provider accepts lucene9 type
+    public void testGetEditorForLucene9Type() throws Exception {
         Editor editor = provider.getIndexEditor(
             Lucene9IndexConstants.TYPE_LUCENE9,
             definitionBuilder,
             root,
             callback);
 
-        // Will be null until Task 7 implements the editor
-        assertNull("Editor implementation pending Task 7", editor);
+        assertNotNull("Editor should be returned for lucene9 type", editor);
     }
 }

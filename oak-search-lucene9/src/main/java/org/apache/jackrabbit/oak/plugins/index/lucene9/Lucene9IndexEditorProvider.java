@@ -60,9 +60,12 @@ public class Lucene9IndexEditorProvider implements IndexEditorProvider {
 
         LOG.debug("Creating Lucene 9 index editor for type: {}", type);
 
-        // TODO: Implement Lucene9IndexEditor in Task 7
-        // For now, return null (tests expect this)
-        return null;
+        try {
+            return new Lucene9IndexEditor("/", definition, root);
+        } catch (Exception e) {
+            throw new CommitFailedException("Lucene9", 1,
+                    "Failed to create Lucene9IndexEditor", e);
+        }
     }
 
     @Override
