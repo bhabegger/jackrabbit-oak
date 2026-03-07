@@ -257,8 +257,11 @@ public class ConcurrentFileAccessTest {
         long sliceLength = 20 * 1024;
         IndexInput slice = indexInput.slice("test-slice", sliceOffset, sliceLength);
 
-        // Verify slice pointer starts at sliceOffset (the seek position from slice creation)
-        assertEquals("Slice should start reading from offset position", sliceOffset, slice.getFilePointer());
+        // Verify slice length is 20KB
+        assertEquals("Slice length should be 20KB", sliceLength, slice.length());
+
+        // Verify slice pointer is at 0 (relative to slice, not original file)
+        assertEquals("Slice pointer should be at 0", 0, slice.getFilePointer());
 
         // Read 1KB from slice
         byte[] sliceData = new byte[1024];
@@ -272,9 +275,8 @@ public class ConcurrentFileAccessTest {
         assertArrayEquals("Slice data should be from offset 10KB of original",
             expectedData, sliceData);
 
-        // Verify slice pointer advanced correctly
-        assertEquals("Slice pointer should have advanced by 1KB",
-            sliceOffset + 1024, slice.getFilePointer());
+        // Verify slice pointer advanced by 1KB (relative to slice)
+        assertEquals("Slice pointer should have advanced by 1KB", 1024, slice.getFilePointer());
 
         // Cleanup
         slice.close();
