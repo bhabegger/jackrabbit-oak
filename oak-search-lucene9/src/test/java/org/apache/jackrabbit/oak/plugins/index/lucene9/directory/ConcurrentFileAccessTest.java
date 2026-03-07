@@ -22,7 +22,10 @@ import org.apache.jackrabbit.oak.spi.state.NodeBuilder;
 import org.apache.lucene.store.IndexInput;
 import org.junit.Test;
 
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.apache.jackrabbit.oak.InitialContentHelper.INITIAL_CONTENT;
@@ -72,7 +75,7 @@ public class ConcurrentFileAccessTest {
         final AtomicReference<byte[]> result0 = new AtomicReference<>();
         final AtomicReference<byte[]> result32KB = new AtomicReference<>();
         final AtomicReference<byte[]> result48KB = new AtomicReference<>();
-        final AtomicReference<Exception> error = new AtomicReference<>();
+        final List<Exception> errors = new CopyOnWriteArrayList<>();
 
         // CountDownLatch to synchronize concurrent reads
         final CountDownLatch startLatch = new CountDownLatch(1);
@@ -87,7 +90,7 @@ public class ConcurrentFileAccessTest {
                 original.readBytes(buffer, 0, buffer.length);
                 result0.set(buffer);
             } catch (Exception e) {
-                error.set(e);
+                errors.add(e);
             } finally {
                 doneLatch.countDown();
             }
@@ -102,7 +105,7 @@ public class ConcurrentFileAccessTest {
                 clone1.readBytes(buffer, 0, buffer.length);
                 result32KB.set(buffer);
             } catch (Exception e) {
-                error.set(e);
+                errors.add(e);
             } finally {
                 doneLatch.countDown();
             }
@@ -117,7 +120,7 @@ public class ConcurrentFileAccessTest {
                 clone2.readBytes(buffer, 0, buffer.length);
                 result48KB.set(buffer);
             } catch (Exception e) {
-                error.set(e);
+                errors.add(e);
             } finally {
                 doneLatch.countDown();
             }
@@ -132,10 +135,10 @@ public class ConcurrentFileAccessTest {
         startLatch.countDown();
 
         // Wait for all threads to complete
-        doneLatch.await();
+        assertTrue("Threads should complete within 5 seconds", doneLatch.await(5, TimeUnit.SECONDS));
 
         // Check for errors
-        assertNull("No errors should occur during concurrent reads", error.get());
+        assertTrue("No errors should occur: " + errors, errors.isEmpty());
 
         // Verify each thread read correct data
         byte[] expected0 = new byte[1024];
