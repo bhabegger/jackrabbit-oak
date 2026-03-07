@@ -22,6 +22,7 @@ import org.apache.jackrabbit.oak.spi.state.NodeState;
 import org.junit.Test;
 
 import static org.apache.jackrabbit.oak.InitialContentHelper.INITIAL_CONTENT;
+import static org.apache.jackrabbit.oak.plugins.memory.EmptyNodeState.EMPTY_NODE;
 import static org.junit.Assert.*;
 
 /**
@@ -44,10 +45,11 @@ public class IndexingFunctionalTest {
             "/emptyNode", definition, root.getNodeState());
 
         // Should not throw exception when entering and leaving node with only hidden properties
-        editor.enter(INITIAL_CONTENT.getChildNode("emptyNode"),
-                     emptyNode.getNodeState());
-        editor.leave(INITIAL_CONTENT.getChildNode("emptyNode"),
-                     emptyNode.getNodeState());
+        editor.enter(EMPTY_NODE, emptyNode.getNodeState());
+        editor.leave(EMPTY_NODE, emptyNode.getNodeState());
+
+        // Close IndexWriter by calling leave on root
+        editor.leave(EMPTY_NODE, root.getNodeState());
     }
 
     @Test
@@ -66,8 +68,7 @@ public class IndexingFunctionalTest {
         Lucene9IndexEditor editor = new Lucene9IndexEditor(
             "/level0", definition, root.getNodeState());
 
-        NodeState beforeState = INITIAL_CONTENT.getChildNode("level0");
-        editor.enter(beforeState, currentLevel.getNodeState());
+        editor.enter(EMPTY_NODE, currentLevel.getNodeState());
 
         // Create child editors for each level
         for (int i = 1; i < 10; i++) {
@@ -80,14 +81,17 @@ public class IndexingFunctionalTest {
             assertNotNull("Child editor should be created for " + levelName, childEditor);
 
             // Enter and leave should not throw
-            childEditor.enter(beforeState, childNode.getNodeState());
-            childEditor.leave(beforeState, childNode.getNodeState());
+            childEditor.enter(EMPTY_NODE, childNode.getNodeState());
+            childEditor.leave(EMPTY_NODE, childNode.getNodeState());
 
             currentLevel = childNode;
         }
 
         // Leave root editor should not throw
-        editor.leave(beforeState, root.child("level0").getNodeState());
+        editor.leave(EMPTY_NODE, root.child("level0").getNodeState());
+
+        // Close IndexWriter by calling leave on root
+        editor.leave(EMPTY_NODE, root.getNodeState());
     }
 
     @Test
@@ -111,10 +115,11 @@ public class IndexingFunctionalTest {
             "/largeNode", definition, root.getNodeState());
 
         // Should not throw OOM or any exception
-        editor.enter(INITIAL_CONTENT.getChildNode("largeNode"),
-                     nodeWithLargeProperty.getNodeState());
-        editor.leave(INITIAL_CONTENT.getChildNode("largeNode"),
-                     nodeWithLargeProperty.getNodeState());
+        editor.enter(EMPTY_NODE, nodeWithLargeProperty.getNodeState());
+        editor.leave(EMPTY_NODE, nodeWithLargeProperty.getNodeState());
+
+        // Close IndexWriter by calling leave on root
+        editor.leave(EMPTY_NODE, root.getNodeState());
     }
 
     @Test
@@ -136,10 +141,11 @@ public class IndexingFunctionalTest {
             "/specialNode", definition, root.getNodeState());
 
         // Should handle all special characters without errors
-        editor.enter(INITIAL_CONTENT.getChildNode("specialNode"),
-                     nodeWithSpecialChars.getNodeState());
-        editor.leave(INITIAL_CONTENT.getChildNode("specialNode"),
-                     nodeWithSpecialChars.getNodeState());
+        editor.enter(EMPTY_NODE, nodeWithSpecialChars.getNodeState());
+        editor.leave(EMPTY_NODE, nodeWithSpecialChars.getNodeState());
+
+        // Close IndexWriter by calling leave on root
+        editor.leave(EMPTY_NODE, root.getNodeState());
     }
 
     @Test
@@ -161,10 +167,11 @@ public class IndexingFunctionalTest {
             "/mixedNode", definition, root.getNodeState());
 
         // Currently only strings are indexed in Phase 1, others should be ignored gracefully
-        editor.enter(INITIAL_CONTENT.getChildNode("mixedNode"),
-                     nodeWithMixedProps.getNodeState());
-        editor.leave(INITIAL_CONTENT.getChildNode("mixedNode"),
-                     nodeWithMixedProps.getNodeState());
+        editor.enter(EMPTY_NODE, nodeWithMixedProps.getNodeState());
+        editor.leave(EMPTY_NODE, nodeWithMixedProps.getNodeState());
+
+        // Close IndexWriter by calling leave on root
+        editor.leave(EMPTY_NODE, root.getNodeState());
     }
 
     @Test
@@ -185,10 +192,11 @@ public class IndexingFunctionalTest {
             "/hiddenPropsNode", definition, root.getNodeState());
 
         // Editor should handle both types, indexing normal and skipping hidden
-        editor.enter(INITIAL_CONTENT.getChildNode("hiddenPropsNode"),
-                     nodeWithHiddenProps.getNodeState());
-        editor.leave(INITIAL_CONTENT.getChildNode("hiddenPropsNode"),
-                     nodeWithHiddenProps.getNodeState());
+        editor.enter(EMPTY_NODE, nodeWithHiddenProps.getNodeState());
+        editor.leave(EMPTY_NODE, nodeWithHiddenProps.getNodeState());
+
+        // Close IndexWriter by calling leave on root
+        editor.leave(EMPTY_NODE, root.getNodeState());
     }
 
     @Test
@@ -209,9 +217,10 @@ public class IndexingFunctionalTest {
             "/manyPropsNode", definition, root.getNodeState());
 
         // Should handle large number of properties without issues
-        editor.enter(INITIAL_CONTENT.getChildNode("manyPropsNode"),
-                     nodeWithManyProps.getNodeState());
-        editor.leave(INITIAL_CONTENT.getChildNode("manyPropsNode"),
-                     nodeWithManyProps.getNodeState());
+        editor.enter(EMPTY_NODE, nodeWithManyProps.getNodeState());
+        editor.leave(EMPTY_NODE, nodeWithManyProps.getNodeState());
+
+        // Close IndexWriter by calling leave on root
+        editor.leave(EMPTY_NODE, root.getNodeState());
     }
 }
