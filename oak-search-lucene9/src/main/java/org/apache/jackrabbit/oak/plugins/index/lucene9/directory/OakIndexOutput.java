@@ -17,6 +17,7 @@
 package org.apache.jackrabbit.oak.plugins.index.lucene9.directory;
 
 import java.io.IOException;
+import java.util.zip.CRC32;
 
 import org.apache.jackrabbit.oak.spi.state.NodeBuilder;
 import org.apache.lucene.store.IndexOutput;
@@ -28,20 +29,24 @@ import org.apache.lucene.store.IndexOutput;
 class OakIndexOutput extends IndexOutput {
 
     private final OakIndexFile file;
+    private final CRC32 crc;
 
     public OakIndexOutput(String name, NodeBuilder fileNode, String dirDetails, BlobFactory blobFactory) {
         super("OakIndexOutput(" + name + ")", name);
         this.file = new OakBufferedIndexFile(name, fileNode, dirDetails, blobFactory);
+        this.crc = new CRC32();
     }
 
     @Override
     public void writeByte(byte b) throws IOException {
+        crc.update(b);
         byte[] buf = new byte[]{b};
         file.writeBytes(buf, 0, 1);
     }
 
     @Override
     public void writeBytes(byte[] b, int offset, int length) throws IOException {
+        crc.update(b, offset, length);
         file.writeBytes(b, offset, length);
     }
 
@@ -52,9 +57,7 @@ class OakIndexOutput extends IndexOutput {
 
     @Override
     public long getChecksum() throws IOException {
-        // Simple checksum based on position
-        // TODO: Implement proper CRC32 checksum in future phase
-        return file.position();
+        return crc.getValue();
     }
 
     @Override
