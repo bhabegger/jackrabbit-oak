@@ -62,8 +62,9 @@ public class Lucene9IndexEditor implements Editor {
         this.root = root;
 
         // Create OakDirectory for this index
+        // Important: Use root.builder() not definition, so index data is stored at /var/indexing/lucene9/
         String indexName = getIndexName(definition);
-        OakDirectory directory = new OakDirectory(definition, indexName, false);
+        OakDirectory directory = new OakDirectory(root.builder(), indexName, false);
 
         // Create IndexWriter with basic config
         IndexWriterConfig config = new IndexWriterConfig();
