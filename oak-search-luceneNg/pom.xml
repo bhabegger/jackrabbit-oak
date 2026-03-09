@@ -33,7 +33,7 @@
     <description>Oak Lucene 9 integration subproject</description>
 
     <properties>
-        <lucene.version>9.11.1</lucene.version>
+        <lucene.version>9.12.2</lucene.version>
     </properties>
 
     <dependencies>
@@ -135,12 +135,16 @@
                 <configuration>
                     <instructions>
                         <Export-Package>
-                            org.apache.jackrabbit.oak.plugins.index.lucene9
+                            org.apache.jackrabbit.oak.plugins.index.luceneNg
                         </Export-Package>
                         <Import-Package>
-                            org.apache.lucene.*;version="[9.11,10)",
+                            !org.apache.lucene.*,
                             *
                         </Import-Package>
+                        <Embed-Dependency>
+                            oak-search;scope=compile|runtime;inline=true,
+                            lucene-*;inline=true
+                        </Embed-Dependency>
                     </instructions>
                 </configuration>
             </plugin>
