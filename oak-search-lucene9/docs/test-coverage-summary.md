@@ -1,8 +1,8 @@
 # Lucene 9 Test Coverage Summary
 
-**Date:** 2026-03-07
-**Coverage:** 83.3% (10/12 files)
-**Total Tests:** 43 (19 existing + 24 new)
+**Date:** 2026-03-09
+**Coverage:** Phase 1 (Write Path) + Phase 2 Step 1 (Query Support)
+**Total Tests:** 49
 **Test Result:** All tests passing
 
 ## New Test Files Added (5)
@@ -150,6 +150,120 @@
    - Current: 83.3% (10/12)
    - Remaining: 2 files to cover directly
 
-## Conclusion
+## Conclusion (Phase 1)
 
 The test suite has been significantly expanded from 41.7% to 83.3% coverage, adding 24 new tests across 5 new test files. All 43 tests are passing, demonstrating robust test coverage for the Lucene 9 indexing implementation. The tests cover critical areas including data integrity, concurrency, error handling, functional operations, and end-to-end integration scenarios.
+
+---
+
+# Phase 2 Step 1: Query Support Added
+
+**Date:** 2026-03-09
+**New Tests:** 6 tests across 3 new test files
+**Total Tests:** 49 (43 from Phase 1 + 6 new)
+**Components:** Read path foundation implemented
+
+## New Components
+
+### Query Infrastructure
+- **IndexSearcherHolder** - Manages IndexSearcher lifecycle for reading indexes
+- **Lucene9QueryIndexProvider** - Routes queries to appropriate Lucene 9 indexes
+- **Lucene9Index** - Executes basic text queries and returns results
+- **Lucene9Cursor** - Iterates over search results (TopDocs)
+- **Lucene9IndexRow** - Represents individual search result with path and score
+
+## New Test Files (3)
+
+1. **IndexSearcherHolderTest** - 1 test
+   - Tests IndexSearcher creation from OakDirectory
+   - Validates reader lifecycle management
+   - Tests empty index handling
+
+2. **Lucene9QueryIndexProviderTest** - 2 tests
+   - Tests provider returns correct indexes for Lucene 9 type
+   - Validates empty list when no Lucene 9 indexes exist
+   - Tests integration with Lucene9IndexTracker
+
+3. **Lucene9IndexTest** - 2 tests
+   - Tests basic full-text search query execution
+   - Validates cost estimation for query planning
+   - Tests TermQuery building from FullTextExpression
+
+## Updated Test Files (1)
+
+4. **IntegrationTest** - 1 new test (5 total, was 4)
+   - Added `testEndToEndQueryWorkflow` for complete write-then-query flow
+   - Tests indexing documents then querying them
+   - Validates QueryIndexProvider integration
+   - Verifies cursor iteration and result paths
+
+## Query Support Status
+
+- ✅ Basic full-text search (TermQuery)
+- ✅ IndexSearcher lifecycle management
+- ✅ Query routing through provider
+- ✅ Result iteration with Cursor/IndexRow
+- ✅ Cost estimation for query planning
+- ✅ End-to-end integration (write → query)
+- ⏳ Property queries (Step 2 - planned)
+- ⏳ Sorting (Step 3 - planned)
+- ⏳ Aggregations (Step 4 - planned)
+- ⏳ Highlighting (Step 5 - planned)
+
+## Critical Fixes
+
+### CRC32 Checksum Implementation
+During Phase 2 Step 1 development, a critical issue was discovered and fixed:
+- **Problem:** OakIndexOutput.getChecksum() was returning file.position() instead of proper CRC32
+- **Impact:** Lucene 9's strict checksum validation prevented reading any indexes
+- **Solution:** Implemented proper CRC32 tracking in OakIndexOutput
+- **Result:** Essential blocker resolved, enabling all query functionality
+
+### Index Storage Location
+- **Fixed:** Lucene9IndexEditor now uses root.builder() for OakDirectory
+- **Result:** Consistent storage at /var/indexing/lucene9/{indexName}
+- **Impact:** Write and read paths now access same storage location
+
+## Test Coverage Phase 2 Step 1
+
+### Query Components Tested (5/5 - 100%)
+- IndexSearcherHolder - Tested by IndexSearcherHolderTest
+- Lucene9QueryIndexProvider - Tested by Lucene9QueryIndexProviderTest
+- Lucene9Index - Tested by Lucene9IndexTest
+- Lucene9Cursor - Tested indirectly through Lucene9IndexTest
+- Lucene9IndexRow - Tested indirectly through Lucene9IndexTest
+
+### Integration Testing
+- End-to-end query workflow validated
+- Write path → Read path integration confirmed
+- QueryIndexProvider routing verified
+- Real search results validated
+
+## Test Distribution Update
+
+### Phase 1 Tests: 43 tests
+- (No changes from Phase 1)
+
+### Phase 2 Step 1 Tests: 6 tests
+- IndexSearcherHolderTest: 1 test
+- Lucene9QueryIndexProviderTest: 2 tests
+- Lucene9IndexTest: 2 tests
+- IntegrationTest: 1 new test (end-to-end)
+
+### Total: 49 tests (all passing)
+
+## Key Achievements
+
+1. **Complete Query Infrastructure:** All core query components implemented and tested
+2. **Full Integration:** Write path and read path work together seamlessly
+3. **Critical Bug Fix:** CRC32 checksum implementation resolved major blocker
+4. **100% Test Pass Rate:** All 49 tests passing
+5. **Foundation for Advanced Queries:** Infrastructure ready for property queries, sorting, etc.
+
+## Next Steps (Phase 2 Step 2+)
+
+1. **Property Queries:** Support queries on specific properties (not just full-text)
+2. **Query Optimization:** Improve cost estimation and query planning
+3. **Sorting:** Add support for sort orders in results
+4. **Advanced Features:** Aggregations, highlighting, faceting
+5. **Performance:** Benchmarking and optimization of query execution
