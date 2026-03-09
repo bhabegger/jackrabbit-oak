@@ -22,6 +22,8 @@ import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.HashSet;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
@@ -55,6 +57,15 @@ public class Lucene9IndexTracker {
     @Nullable
     public Lucene9IndexNode acquireIndexNode(@NotNull String indexPath) {
         return indices.get(indexPath);
+    }
+
+    /**
+     * Get paths of all tracked indexes.
+     *
+     * @return set of index paths
+     */
+    public Set<String> getIndexPaths() {
+        return new HashSet<>(indices.keySet());
     }
 
     /**
