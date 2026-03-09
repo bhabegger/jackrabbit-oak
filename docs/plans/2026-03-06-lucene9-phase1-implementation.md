@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Create oak-search-lucene9 module with basic async indexing and query capabilities, storing data in `/var/indexing/lucene9/<indexName>/`.
+**Goal:** Create oak-search-luceneNg module with basic async indexing and query capabilities, storing data in `/var/indexing/lucene/<indexName>/`.
 
 **Architecture:** New module following oak-search-elastic pattern with ~60-80 files. Core components: Lucene9Directory (custom storage), IndexEditorProvider (writes), IndexProvider (queries), IndexDefinition (config). Pure Maven dependencies on Lucene 9.11.1, no embedded code.
 
@@ -23,23 +23,23 @@
 
 ## Task 1: Module Setup
 
-**Goal:** Create oak-search-lucene9 module with dependencies
+**Goal:** Create oak-search-luceneNg module with dependencies
 
 ### Step 1: Create module directory structure
 
 ```bash
 cd /Users/bhabegger/claude/jackrabbit-oak
-mkdir -p oak-search-lucene9/src/main/java/org/apache/jackrabbit/oak/plugins/index/lucene9
-mkdir -p oak-search-lucene9/src/test/java/org/apache/jackrabbit/oak/plugins/index/lucene9
-mkdir -p oak-search-lucene9/src/main/resources
-mkdir -p oak-search-lucene9/src/test/resources
+mkdir -p oak-search-luceneNg/src/main/java/org/apache/jackrabbit/oak/plugins/index/lucene9
+mkdir -p oak-search-luceneNg/src/test/java/org/apache/jackrabbit/oak/plugins/index/lucene9
+mkdir -p oak-search-luceneNg/src/main/resources
+mkdir -p oak-search-luceneNg/src/test/resources
 ```
 
 Expected: Directories created
 
 ### Step 2: Create pom.xml
 
-**File:** `oak-search-lucene9/pom.xml`
+**File:** `oak-search-luceneNg/pom.xml`
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -55,7 +55,7 @@ Expected: Directories created
         <relativePath>../pom.xml</relativePath>
     </parent>
 
-    <artifactId>oak-search-lucene9</artifactId>
+    <artifactId>oak-search-luceneNg</artifactId>
     <name>Oak Lucene 9</name>
     <packaging>bundle</packaging>
 
@@ -170,7 +170,7 @@ Expected: Directories created
 Find the `<modules>` section and add:
 
 ```xml
-<module>oak-search-lucene9</module>
+<module>oak-search-luceneNg</module>
 ```
 
 Insert alphabetically after `<module>oak-search-elastic</module>`.
@@ -179,7 +179,7 @@ Insert alphabetically after `<module>oak-search-elastic</module>`.
 
 Run:
 ```bash
-cd oak-search-lucene9
+cd oak-search-luceneNg
 mvn clean compile
 ```
 
@@ -188,9 +188,9 @@ Expected: `BUILD SUCCESS`
 ### Step 5: Commit module setup
 
 ```bash
-git add oak-search-lucene9/pom.xml pom.xml
-git add oak-search-lucene9/src/
-git commit -m "feat: add oak-search-lucene9 module skeleton
+git add oak-search-luceneNg/pom.xml pom.xml
+git add oak-search-luceneNg/src/
+git commit -m "feat: add oak-search-luceneNg module skeleton
 
 Create new module for Lucene 9 indexing implementation with:
 - Lucene 9.11.1 dependencies (core, queryparser, analysis-common)
@@ -211,7 +211,7 @@ Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>"
 
 ### Step 1: Create constants class
 
-**File:** `oak-search-lucene9/src/main/java/org/apache/jackrabbit/oak/plugins/index/lucene9/Lucene9IndexConstants.java`
+**File:** `oak-search-luceneNg/src/main/java/org/apache/jackrabbit/oak/plugins/index/luceneNg/LuceneNgIndexConstants.java`
 
 ```java
 /*
@@ -235,7 +235,7 @@ package org.apache.jackrabbit.oak.plugins.index.lucene9;
 /**
  * Constants for Lucene 9 index implementation.
  */
-public interface Lucene9IndexConstants {
+public interface LuceneNgIndexConstants {
 
     /**
      * Index type for Lucene 9 indexes.
@@ -261,7 +261,7 @@ public interface Lucene9IndexConstants {
 
 ### Step 2: Write test for constants
 
-**File:** `oak-search-lucene9/src/test/java/org/apache/jackrabbit/oak/plugins/index/lucene9/Lucene9IndexConstantsTest.java`
+**File:** `oak-search-luceneNg/src/test/java/org/apache/jackrabbit/oak/plugins/index/luceneNg/LuceneNgIndexConstantsTest.java`
 
 ```java
 package org.apache.jackrabbit.oak.plugins.index.lucene9;
@@ -271,18 +271,18 @@ import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 
-public class Lucene9IndexConstantsTest {
+public class LuceneNgIndexConstantsTest {
 
     @Test
     public void testTypeConstant() {
-        assertNotNull(Lucene9IndexConstants.TYPE_LUCENE9);
-        assertEquals("lucene9", Lucene9IndexConstants.TYPE_LUCENE9);
+        assertNotNull(LuceneNgIndexConstants.TYPE_LUCENE9);
+        assertEquals("lucene9", LuceneNgIndexConstants.TYPE_LUCENE9);
     }
 
     @Test
     public void testStoragePathConstant() {
-        assertNotNull(Lucene9IndexConstants.VAR_INDEXING_BASE_PATH);
-        assertEquals("/var/indexing/lucene9", Lucene9IndexConstants.VAR_INDEXING_BASE_PATH);
+        assertNotNull(LuceneNgIndexConstants.VAR_INDEXING_BASE_PATH);
+        assertEquals("/var/indexing/lucene9", LuceneNgIndexConstants.VAR_INDEXING_BASE_PATH);
     }
 }
 ```
@@ -291,7 +291,7 @@ public class Lucene9IndexConstantsTest {
 
 Run:
 ```bash
-mvn test -Dtest=Lucene9IndexConstantsTest
+mvn test -Dtest=LuceneNgIndexConstantsTest
 ```
 
 Expected: `Tests run: 2, Failures: 0, Errors: 0, Skipped: 0`
@@ -299,8 +299,8 @@ Expected: `Tests run: 2, Failures: 0, Errors: 0, Skipped: 0`
 ### Step 4: Commit constants
 
 ```bash
-git add oak-search-lucene9/src/main/java/org/apache/jackrabbit/oak/plugins/index/lucene9/Lucene9IndexConstants.java
-git add oak-search-lucene9/src/test/java/org/apache/jackrabbit/oak/plugins/index/lucene9/Lucene9IndexConstantsTest.java
+git add oak-search-luceneNg/src/main/java/org/apache/jackrabbit/oak/plugins/index/luceneNg/LuceneNgIndexConstants.java
+git add oak-search-luceneNg/src/test/java/org/apache/jackrabbit/oak/plugins/index/luceneNg/LuceneNgIndexConstantsTest.java
 git commit -m "feat: add Lucene9 index type constants
 
 Define TYPE_LUCENE9 and storage path constants for Lucene 9 implementation.
@@ -310,13 +310,13 @@ Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>"
 
 ---
 
-## Task 3: Lucene9IndexDefinition
+## Task 3: LuceneNgIndexDefinition
 
 **Goal:** Create IndexDefinition extension for Lucene 9 configuration
 
 ### Step 1: Write failing test for IndexDefinition
 
-**File:** `oak-search-lucene9/src/test/java/org/apache/jackrabbit/oak/plugins/index/lucene9/Lucene9IndexDefinitionTest.java`
+**File:** `oak-search-luceneNg/src/test/java/org/apache/jackrabbit/oak/plugins/index/luceneNg/LuceneNgIndexDefinitionTest.java`
 
 ```java
 package org.apache.jackrabbit.oak.plugins.index.lucene9;
@@ -332,7 +332,7 @@ import static org.apache.jackrabbit.oak.plugins.nodetype.write.InitialContent.IN
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 
-public class Lucene9IndexDefinitionTest {
+public class LuceneNgIndexDefinitionTest {
 
     private NodeState root;
     private NodeBuilder builder;
@@ -341,13 +341,13 @@ public class Lucene9IndexDefinitionTest {
     public void setup() {
         root = INITIAL_CONTENT;
         builder = root.builder();
-        builder.setProperty("type", Lucene9IndexConstants.TYPE_LUCENE9);
+        builder.setProperty("type", LuceneNgIndexConstants.TYPE_LUCENE9);
     }
 
     @Test
     public void testBasicCreation() {
         NodeState defnState = builder.getNodeState();
-        Lucene9IndexDefinition definition = new Lucene9IndexDefinition(
+        LuceneNgIndexDefinition definition = new LuceneNgIndexDefinition(
             root, defnState, "/oak:index/test");
 
         assertNotNull(definition);
@@ -357,7 +357,7 @@ public class Lucene9IndexDefinitionTest {
     @Test
     public void testIndexName() {
         NodeState defnState = builder.getNodeState();
-        Lucene9IndexDefinition definition = new Lucene9IndexDefinition(
+        LuceneNgIndexDefinition definition = new LuceneNgIndexDefinition(
             root, defnState, "/oak:index/myIndex");
 
         assertEquals("myIndex", definition.getIndexName());
@@ -369,14 +369,14 @@ public class Lucene9IndexDefinitionTest {
 
 Run:
 ```bash
-mvn test -Dtest=Lucene9IndexDefinitionTest
+mvn test -Dtest=LuceneNgIndexDefinitionTest
 ```
 
-Expected: `Compilation failure` - class Lucene9IndexDefinition doesn't exist
+Expected: `Compilation failure` - class LuceneNgIndexDefinition doesn't exist
 
-### Step 3: Create Lucene9IndexDefinition
+### Step 3: Create LuceneNgIndexDefinition
 
-**File:** `oak-search-lucene9/src/main/java/org/apache/jackrabbit/oak/plugins/index/lucene9/Lucene9IndexDefinition.java`
+**File:** `oak-search-luceneNg/src/main/java/org/apache/jackrabbit/oak/plugins/index/luceneNg/LuceneNgIndexDefinition.java`
 
 ```java
 /*
@@ -406,7 +406,7 @@ import org.jetbrains.annotations.NotNull;
  * Index definition for Lucene 9 indexes.
  * Extends the base IndexDefinition with Lucene 9 specific configuration.
  */
-public class Lucene9IndexDefinition extends IndexDefinition {
+public class LuceneNgIndexDefinition extends IndexDefinition {
 
     /**
      * Creates a new Lucene 9 index definition.
@@ -415,7 +415,7 @@ public class Lucene9IndexDefinition extends IndexDefinition {
      * @param defn the index definition node state
      * @param indexPath the path to this index
      */
-    public Lucene9IndexDefinition(@NotNull NodeState root,
+    public LuceneNgIndexDefinition(@NotNull NodeState root,
                                   @NotNull NodeState defn,
                                   @NotNull String indexPath) {
         super(root, defn, indexPath);
@@ -433,10 +433,10 @@ public class Lucene9IndexDefinition extends IndexDefinition {
     /**
      * Gets the storage path for this index in /var.
      *
-     * @return the storage path (e.g., /var/indexing/lucene9/myIndex)
+     * @return the storage path (e.g., /var/indexing/lucene/myIndex)
      */
     public String getStoragePath() {
-        return Lucene9IndexConstants.VAR_INDEXING_BASE_PATH + "/" + getIndexName();
+        return LuceneNgIndexConstants.VAR_INDEXING_BASE_PATH + "/" + getIndexName();
     }
 }
 ```
@@ -445,14 +445,14 @@ public class Lucene9IndexDefinition extends IndexDefinition {
 
 Run:
 ```bash
-mvn test -Dtest=Lucene9IndexDefinitionTest
+mvn test -Dtest=LuceneNgIndexDefinitionTest
 ```
 
 Expected: `Tests run: 2, Failures: 0, Errors: 0, Skipped: 0`
 
 ### Step 5: Add test for storage path
 
-**File:** `oak-search-lucene9/src/test/java/org/apache/jackrabbit/oak/plugins/index/lucene9/Lucene9IndexDefinitionTest.java`
+**File:** `oak-search-luceneNg/src/test/java/org/apache/jackrabbit/oak/plugins/index/luceneNg/LuceneNgIndexDefinitionTest.java`
 
 Add this test method:
 
@@ -460,10 +460,10 @@ Add this test method:
 @Test
 public void testStoragePath() {
     NodeState defnState = builder.getNodeState();
-    Lucene9IndexDefinition definition = new Lucene9IndexDefinition(
+    LuceneNgIndexDefinition definition = new LuceneNgIndexDefinition(
         root, defnState, "/oak:index/assetIndex");
 
-    assertEquals("/var/indexing/lucene9/assetIndex", definition.getStoragePath());
+    assertEquals("/var/indexing/lucene/assetIndex", definition.getStoragePath());
 }
 ```
 
@@ -471,7 +471,7 @@ public void testStoragePath() {
 
 Run:
 ```bash
-mvn test -Dtest=Lucene9IndexDefinitionTest
+mvn test -Dtest=LuceneNgIndexDefinitionTest
 ```
 
 Expected: `Tests run: 3, Failures: 0, Errors: 0, Skipped: 0`
@@ -479,12 +479,12 @@ Expected: `Tests run: 3, Failures: 0, Errors: 0, Skipped: 0`
 ### Step 7: Commit IndexDefinition
 
 ```bash
-git add oak-search-lucene9/src/main/java/org/apache/jackrabbit/oak/plugins/index/lucene9/Lucene9IndexDefinition.java
-git add oak-search-lucene9/src/test/java/org/apache/jackrabbit/oak/plugins/index/lucene9/Lucene9IndexDefinitionTest.java
-git commit -m "feat: add Lucene9IndexDefinition
+git add oak-search-luceneNg/src/main/java/org/apache/jackrabbit/oak/plugins/index/luceneNg/LuceneNgIndexDefinition.java
+git add oak-search-luceneNg/src/test/java/org/apache/jackrabbit/oak/plugins/index/luceneNg/LuceneNgIndexDefinitionTest.java
+git commit -m "feat: add LuceneNgIndexDefinition
 
 Extend IndexDefinition with Lucene 9 specific configuration.
-Includes storage path calculation for /var/indexing/lucene9/<indexName>.
+Includes storage path calculation for /var/indexing/lucene/<indexName>.
 
 Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>"
 ```
@@ -493,14 +493,14 @@ Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>"
 
 ## Task 4: Lucene9Directory (Storage Abstraction)
 
-**Goal:** Implement Lucene Directory that stores files in `/var/indexing/lucene9/<indexName>/`
+**Goal:** Implement Lucene Directory that stores files in `/var/indexing/lucene/<indexName>/`
 
 ### Step 1: Write failing test for directory creation
 
-**File:** `oak-search-lucene9/src/test/java/org/apache/jackrabbit/oak/plugins/index/lucene9/directory/Lucene9DirectoryTest.java`
+**File:** `oak-search-luceneNg/src/test/java/org/apache/jackrabbit/oak/plugins/index/luceneNg/directory/Lucene9DirectoryTest.java`
 
 ```java
-package org.apache.jackrabbit.oak.plugins.index.lucene9.directory;
+package org.apache.jackrabbit.oak.plugins.index.luceneNg.directory;
 
 import org.apache.jackrabbit.oak.spi.state.NodeBuilder;
 import org.apache.jackrabbit.oak.spi.state.NodeState;
@@ -529,7 +529,7 @@ public class Lucene9DirectoryTest {
     public void testVarNodeCreated() throws Exception {
         Lucene9Directory directory = new Lucene9Directory(root, "testIndex", false);
 
-        // Verify /var/indexing/lucene9/testIndex was created
+        // Verify /var/indexing/lucene/testIndex was created
         assertTrue(root.hasChildNode("var"));
         NodeBuilder var = root.child("var");
         assertTrue(var.hasChildNode("indexing"));
@@ -561,12 +561,12 @@ Expected: `Compilation failure` - Lucene9Directory doesn't exist
 ### Step 3: Create directory package
 
 ```bash
-mkdir -p oak-search-lucene9/src/main/java/org/apache/jackrabbit/oak/plugins/index/lucene9/directory
+mkdir -p oak-search-luceneNg/src/main/java/org/apache/jackrabbit/oak/plugins/index/luceneNg/directory
 ```
 
 ### Step 4: Create Lucene9Directory skeleton
 
-**File:** `oak-search-lucene9/src/main/java/org/apache/jackrabbit/oak/plugins/index/lucene9/directory/Lucene9Directory.java`
+**File:** `oak-search-luceneNg/src/main/java/org/apache/jackrabbit/oak/plugins/index/luceneNg/directory/Lucene9Directory.java`
 
 ```java
 /*
@@ -585,10 +585,10 @@ mkdir -p oak-search-lucene9/src/main/java/org/apache/jackrabbit/oak/plugins/inde
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.jackrabbit.oak.plugins.index.lucene9.directory;
+package org.apache.jackrabbit.oak.plugins.index.luceneNg.directory;
 
 import org.apache.jackrabbit.oak.api.Type;
-import org.apache.jackrabbit.oak.plugins.index.lucene9.Lucene9IndexConstants;
+import org.apache.jackrabbit.oak.plugins.index.luceneNg.LuceneNgIndexConstants;
 import org.apache.jackrabbit.oak.spi.state.NodeBuilder;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.IOContext;
@@ -609,7 +609,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Lucene Directory implementation that stores index files in Oak repository
- * under /var/indexing/lucene9/<indexName>.
+ * under /var/indexing/lucene/<indexName>.
  */
 public class Lucene9Directory extends Directory {
     private static final Logger LOG = LoggerFactory.getLogger(Lucene9Directory.class);
@@ -638,7 +638,7 @@ public class Lucene9Directory extends Directory {
     }
 
     /**
-     * Gets or creates the directory node at /var/indexing/lucene9/<indexName>.
+     * Gets or creates the directory node at /var/indexing/lucene/<indexName>.
      */
     private NodeBuilder getOrCreateDirectoryNode() {
         NodeBuilder var = root.child("var");
@@ -653,8 +653,8 @@ public class Lucene9Directory extends Directory {
      * Gets the current file listing.
      */
     private List<String> getListing() {
-        if (directoryBuilder.hasProperty(Lucene9IndexConstants.PROP_DIR_LISTING)) {
-            return new ArrayList<>(directoryBuilder.getProperty(Lucene9IndexConstants.PROP_DIR_LISTING)
+        if (directoryBuilder.hasProperty(LuceneNgIndexConstants.PROP_DIR_LISTING)) {
+            return new ArrayList<>(directoryBuilder.getProperty(LuceneNgIndexConstants.PROP_DIR_LISTING)
                 .getValue(Type.STRINGS));
         }
         return Collections.emptyList();
@@ -683,8 +683,8 @@ public class Lucene9Directory extends Directory {
             throw new IOException("File not found: " + name);
         }
         NodeBuilder fileNode = directoryBuilder.getChildNode(name);
-        if (fileNode.hasProperty(Lucene9IndexConstants.PROP_BLOB_SIZE)) {
-            return fileNode.getProperty(Lucene9IndexConstants.PROP_BLOB_SIZE).getValue(Type.LONG);
+        if (fileNode.hasProperty(LuceneNgIndexConstants.PROP_BLOB_SIZE)) {
+            return fileNode.getProperty(LuceneNgIndexConstants.PROP_BLOB_SIZE).getValue(Type.LONG);
         }
         return 0;
     }
@@ -696,7 +696,7 @@ public class Lucene9Directory extends Directory {
         }
         fileNames.add(name);
         updateListing();
-        return new Lucene9IndexOutput(name, directoryBuilder.child(name));
+        return new LuceneNgIndexOutput(name, directoryBuilder.child(name));
     }
 
     @Override
@@ -758,7 +758,7 @@ public class Lucene9Directory extends Directory {
             throw new IOException("File not found: " + name);
         }
         NodeBuilder fileNode = directoryBuilder.getChildNode(name);
-        return new Lucene9IndexInput(name, fileNode);
+        return new LuceneNgIndexInput(name, fileNode);
     }
 
     @Override
@@ -787,7 +787,7 @@ public class Lucene9Directory extends Directory {
      */
     private void updateListing() {
         directoryBuilder.setProperty(
-            Lucene9IndexConstants.PROP_DIR_LISTING,
+            LuceneNgIndexConstants.PROP_DIR_LISTING,
             new ArrayList<>(fileNames),
             Type.STRINGS);
     }
@@ -801,18 +801,18 @@ Run:
 mvn test -Dtest=Lucene9DirectoryTest
 ```
 
-Expected: `Compilation failure` - Lucene9IndexOutput and Lucene9IndexInput don't exist
+Expected: `Compilation failure` - LuceneNgIndexOutput and LuceneNgIndexInput don't exist
 
 ### Step 6: Create stub IndexOutput
 
-**File:** `oak-search-lucene9/src/main/java/org/apache/jackrabbit/oak/plugins/index/lucene9/directory/Lucene9IndexOutput.java`
+**File:** `oak-search-luceneNg/src/main/java/org/apache/jackrabbit/oak/plugins/index/luceneNg/directory/LuceneNgIndexOutput.java`
 
 ```java
-package org.apache.jackrabbit.oak.plugins.index.lucene9.directory;
+package org.apache.jackrabbit.oak.plugins.index.luceneNg.directory;
 
 import org.apache.jackrabbit.oak.api.Blob;
 import org.apache.jackrabbit.oak.api.Type;
-import org.apache.jackrabbit.oak.plugins.index.lucene9.Lucene9IndexConstants;
+import org.apache.jackrabbit.oak.plugins.index.luceneNg.LuceneNgIndexConstants;
 import org.apache.jackrabbit.oak.plugins.memory.ArrayBasedBlob;
 import org.apache.jackrabbit.oak.spi.state.NodeBuilder;
 import org.apache.lucene.store.IndexOutput;
@@ -823,13 +823,13 @@ import java.io.IOException;
 /**
  * IndexOutput implementation for Lucene9Directory.
  */
-class Lucene9IndexOutput extends IndexOutput {
+class LuceneNgIndexOutput extends IndexOutput {
     private final String name;
     private final NodeBuilder fileNode;
     private final ByteArrayOutputStream buffer;
     private long position = 0;
 
-    Lucene9IndexOutput(String name, NodeBuilder fileNode) {
+    LuceneNgIndexOutput(String name, NodeBuilder fileNode) {
         super(name, name);
         this.name = name;
         this.fileNode = fileNode;
@@ -842,7 +842,7 @@ class Lucene9IndexOutput extends IndexOutput {
         byte[] data = buffer.toByteArray();
         Blob blob = new ArrayBasedBlob(data);
         fileNode.setProperty("jcr:data", blob, Type.BINARY);
-        fileNode.setProperty(Lucene9IndexConstants.PROP_BLOB_SIZE, data.length);
+        fileNode.setProperty(LuceneNgIndexConstants.PROP_BLOB_SIZE, data.length);
     }
 
     @Override
@@ -872,10 +872,10 @@ class Lucene9IndexOutput extends IndexOutput {
 
 ### Step 7: Create stub IndexInput
 
-**File:** `oak-search-lucene9/src/main/java/org/apache/jackrabbit/oak/plugins/index/lucene9/directory/Lucene9IndexInput.java`
+**File:** `oak-search-luceneNg/src/main/java/org/apache/jackrabbit/oak/plugins/index/luceneNg/directory/LuceneNgIndexInput.java`
 
 ```java
-package org.apache.jackrabbit.oak.plugins.index.lucene9.directory;
+package org.apache.jackrabbit.oak.plugins.index.luceneNg.directory;
 
 import org.apache.jackrabbit.oak.api.Blob;
 import org.apache.jackrabbit.oak.api.PropertyState;
@@ -889,12 +889,12 @@ import java.io.InputStream;
 /**
  * IndexInput implementation for Lucene9Directory.
  */
-class Lucene9IndexInput extends IndexInput {
+class LuceneNgIndexInput extends IndexInput {
     private final String name;
     private final byte[] data;
     private int position = 0;
 
-    Lucene9IndexInput(String name, NodeBuilder fileNode) throws IOException {
+    LuceneNgIndexInput(String name, NodeBuilder fileNode) throws IOException {
         super(name);
         this.name = name;
 
@@ -910,7 +910,7 @@ class Lucene9IndexInput extends IndexInput {
         }
     }
 
-    private Lucene9IndexInput(String name, byte[] data, int position) {
+    private LuceneNgIndexInput(String name, byte[] data, int position) {
         super(name);
         this.name = name;
         this.data = data;
@@ -945,7 +945,7 @@ class Lucene9IndexInput extends IndexInput {
         if (offset < 0 || length < 0 || offset + length > data.length) {
             throw new IOException("Invalid slice parameters");
         }
-        return new Lucene9IndexInput(sliceDescription, data, (int) offset);
+        return new LuceneNgIndexInput(sliceDescription, data, (int) offset);
     }
 
     @Override
@@ -978,7 +978,7 @@ Expected: `Tests run: 3, Failures: 0, Errors: 0, Skipped: 0`
 
 ### Step 9: Add write/read test
 
-**File:** `oak-search-lucene9/src/test/java/org/apache/jackrabbit/oak/plugins/index/lucene9/directory/Lucene9DirectoryTest.java`
+**File:** `oak-search-luceneNg/src/test/java/org/apache/jackrabbit/oak/plugins/index/luceneNg/directory/Lucene9DirectoryTest.java`
 
 Add test:
 
@@ -1019,12 +1019,12 @@ Expected: `Tests run: 4, Failures: 0, Errors: 0, Skipped: 0`
 ### Step 11: Commit Lucene9Directory
 
 ```bash
-git add oak-search-lucene9/src/main/java/org/apache/jackrabbit/oak/plugins/index/lucene9/directory/
-git add oak-search-lucene9/src/test/java/org/apache/jackrabbit/oak/plugins/index/lucene9/directory/
+git add oak-search-luceneNg/src/main/java/org/apache/jackrabbit/oak/plugins/index/luceneNg/directory/
+git add oak-search-luceneNg/src/test/java/org/apache/jackrabbit/oak/plugins/index/luceneNg/directory/
 git commit -m "feat: implement Lucene9Directory for /var storage
 
 Lucene Directory implementation that stores index files in Oak repository
-at /var/indexing/lucene9/<indexName>. Includes:
+at /var/indexing/lucene/<indexName>. Includes:
 - Auto-creation of /var node structure
 - IndexOutput for writing files
 - IndexInput for reading files
@@ -1041,7 +1041,7 @@ Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>"
 
 ### Step 1: Write test for IndexTracker
 
-**File:** `oak-search-lucene9/src/test/java/org/apache/jackrabbit/oak/plugins/index/lucene9/Lucene9IndexTrackerTest.java`
+**File:** `oak-search-luceneNg/src/test/java/org/apache/jackrabbit/oak/plugins/index/luceneNg/LuceneNgIndexTrackerTest.java`
 
 ```java
 package org.apache.jackrabbit.oak.plugins.index.lucene9;
@@ -1054,7 +1054,7 @@ import org.junit.Test;
 import static org.apache.jackrabbit.oak.plugins.nodetype.write.InitialContent.INITIAL_CONTENT;
 import static org.junit.Assert.*;
 
-public class Lucene9IndexTrackerTest {
+public class LuceneNgIndexTrackerTest {
 
     private NodeState root;
     private NodeBuilder builder;
@@ -1067,19 +1067,19 @@ public class Lucene9IndexTrackerTest {
         // Create index definition
         NodeBuilder oakIndex = builder.child("oak:index");
         NodeBuilder testIndex = oakIndex.child("testIndex");
-        testIndex.setProperty("type", Lucene9IndexConstants.TYPE_LUCENE9);
+        testIndex.setProperty("type", LuceneNgIndexConstants.TYPE_LUCENE9);
         testIndex.setProperty("async", "async");
     }
 
     @Test
     public void testTrackerCreation() {
-        Lucene9IndexTracker tracker = new Lucene9IndexTracker();
+        LuceneNgIndexTracker tracker = new LuceneNgIndexTracker();
         assertNotNull(tracker);
     }
 
     @Test
     public void testUpdate() {
-        Lucene9IndexTracker tracker = new Lucene9IndexTracker();
+        LuceneNgIndexTracker tracker = new LuceneNgIndexTracker();
         NodeState after = builder.getNodeState();
 
         tracker.update(after);
@@ -1088,11 +1088,11 @@ public class Lucene9IndexTrackerTest {
 
     @Test
     public void testGetIndexNode() {
-        Lucene9IndexTracker tracker = new Lucene9IndexTracker();
+        LuceneNgIndexTracker tracker = new LuceneNgIndexTracker();
         NodeState after = builder.getNodeState();
         tracker.update(after);
 
-        Lucene9IndexNode indexNode = tracker.acquireIndexNode("/oak:index/testIndex");
+        LuceneNgIndexNode indexNode = tracker.acquireIndexNode("/oak:index/testIndex");
         assertNotNull(indexNode);
     }
 }
@@ -1102,14 +1102,14 @@ public class Lucene9IndexTrackerTest {
 
 Run:
 ```bash
-mvn test -Dtest=Lucene9IndexTrackerTest
+mvn test -Dtest=LuceneNgIndexTrackerTest
 ```
 
 Expected: `Compilation failure`
 
-### Step 3: Create Lucene9IndexTracker
+### Step 3: Create LuceneNgIndexTracker
 
-**File:** `oak-search-lucene9/src/main/java/org/apache/jackrabbit/oak/plugins/index/lucene9/Lucene9IndexTracker.java`
+**File:** `oak-search-luceneNg/src/main/java/org/apache/jackrabbit/oak/plugins/index/luceneNg/LuceneNgIndexTracker.java`
 
 ```java
 /*
@@ -1144,10 +1144,10 @@ import java.util.concurrent.ConcurrentMap;
 /**
  * Tracks Lucene 9 indexes and provides access to index nodes.
  */
-public class Lucene9IndexTracker {
-    private static final Logger LOG = LoggerFactory.getLogger(Lucene9IndexTracker.class);
+public class LuceneNgIndexTracker {
+    private static final Logger LOG = LoggerFactory.getLogger(LuceneNgIndexTracker.class);
 
-    private final ConcurrentMap<String, Lucene9IndexNode> indices = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, LuceneNgIndexNode> indices = new ConcurrentHashMap<>();
     private NodeState root;
 
     /**
@@ -1167,7 +1167,7 @@ public class Lucene9IndexTracker {
      * @return the index node, or null if not found
      */
     @Nullable
-    public Lucene9IndexNode acquireIndexNode(@NotNull String indexPath) {
+    public LuceneNgIndexNode acquireIndexNode(@NotNull String indexPath) {
         return indices.get(indexPath);
     }
 
@@ -1191,11 +1191,11 @@ public class Lucene9IndexTracker {
 
             // Check if it's a lucene9 index
             String type = NodeStateUtils.getString(indexState, "type");
-            if (Lucene9IndexConstants.TYPE_LUCENE9.equals(type)) {
+            if (LuceneNgIndexConstants.TYPE_LUCENE9.equals(type)) {
                 // Create or update index node
                 indices.computeIfAbsent(indexPath, path -> {
                     LOG.debug("Tracking new Lucene 9 index: {}", path);
-                    return new Lucene9IndexNode(path, root, indexState);
+                    return new LuceneNgIndexNode(path, root, indexState);
                 });
             }
         }
@@ -1203,9 +1203,9 @@ public class Lucene9IndexTracker {
 }
 ```
 
-### Step 4: Create Lucene9IndexNode stub
+### Step 4: Create LuceneNgIndexNode stub
 
-**File:** `oak-search-lucene9/src/main/java/org/apache/jackrabbit/oak/plugins/index/lucene9/Lucene9IndexNode.java`
+**File:** `oak-search-luceneNg/src/main/java/org/apache/jackrabbit/oak/plugins/index/luceneNg/LuceneNgIndexNode.java`
 
 ```java
 /*
@@ -1232,9 +1232,9 @@ import org.jetbrains.annotations.NotNull;
 /**
  * Represents a Lucene 9 index with its definition and searcher.
  */
-public class Lucene9IndexNode {
+public class LuceneNgIndexNode {
     private final String indexPath;
-    private final Lucene9IndexDefinition definition;
+    private final LuceneNgIndexDefinition definition;
 
     /**
      * Creates a new index node.
@@ -1243,11 +1243,11 @@ public class Lucene9IndexNode {
      * @param root the root node state
      * @param indexState the index definition node state
      */
-    public Lucene9IndexNode(@NotNull String indexPath,
+    public LuceneNgIndexNode(@NotNull String indexPath,
                            @NotNull NodeState root,
                            @NotNull NodeState indexState) {
         this.indexPath = indexPath;
-        this.definition = new Lucene9IndexDefinition(root, indexState, indexPath);
+        this.definition = new LuceneNgIndexDefinition(root, indexState, indexPath);
     }
 
     /**
@@ -1264,7 +1264,7 @@ public class Lucene9IndexNode {
      *
      * @return the index definition
      */
-    public Lucene9IndexDefinition getDefinition() {
+    public LuceneNgIndexDefinition getDefinition() {
         return definition;
     }
 }
@@ -1274,7 +1274,7 @@ public class Lucene9IndexNode {
 
 Run:
 ```bash
-mvn test -Dtest=Lucene9IndexTrackerTest
+mvn test -Dtest=LuceneNgIndexTrackerTest
 ```
 
 Expected: `Tests run: 3, Failures: 0, Errors: 0, Skipped: 0`
@@ -1282,10 +1282,10 @@ Expected: `Tests run: 3, Failures: 0, Errors: 0, Skipped: 0`
 ### Step 6: Commit IndexTracker
 
 ```bash
-git add oak-search-lucene9/src/main/java/org/apache/jackrabbit/oak/plugins/index/lucene9/Lucene9IndexTracker.java
-git add oak-search-lucene9/src/main/java/org/apache/jackrabbit/oak/plugins/index/lucene9/Lucene9IndexNode.java
-git add oak-search-lucene9/src/test/java/org/apache/jackrabbit/oak/plugins/index/lucene9/Lucene9IndexTrackerTest.java
-git commit -m "feat: add Lucene9IndexTracker and IndexNode
+git add oak-search-luceneNg/src/main/java/org/apache/jackrabbit/oak/plugins/index/luceneNg/LuceneNgIndexTracker.java
+git add oak-search-luceneNg/src/main/java/org/apache/jackrabbit/oak/plugins/index/luceneNg/LuceneNgIndexNode.java
+git add oak-search-luceneNg/src/test/java/org/apache/jackrabbit/oak/plugins/index/luceneNg/LuceneNgIndexTrackerTest.java
+git commit -m "feat: add LuceneNgIndexTracker and IndexNode
 
 Index tracker manages lifecycle of Lucene 9 indexes:
 - Scans /oak:index for lucene9 type indexes
@@ -1303,7 +1303,7 @@ Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>"
 
 ### Step 1: Write test for EditorProvider
 
-**File:** `oak-search-lucene9/src/test/java/org/apache/jackrabbit/oak/plugins/index/lucene9/Lucene9IndexEditorProviderTest.java`
+**File:** `oak-search-luceneNg/src/test/java/org/apache/jackrabbit/oak/plugins/index/luceneNg/LuceneNgIndexEditorProviderTest.java`
 
 ```java
 package org.apache.jackrabbit.oak.plugins.index.lucene9;
@@ -1320,24 +1320,24 @@ import org.mockito.MockitoAnnotations;
 import static org.apache.jackrabbit.oak.plugins.nodetype.write.InitialContent.INITIAL_CONTENT;
 import static org.junit.Assert.*;
 
-public class Lucene9IndexEditorProviderTest {
+public class LuceneNgIndexEditorProviderTest {
 
     @Mock
     private IndexUpdateCallback callback;
 
     private NodeState root;
     private NodeBuilder definitionBuilder;
-    private Lucene9IndexEditorProvider provider;
+    private LuceneNgIndexEditorProvider provider;
 
     @Before
     public void setup() {
         MockitoAnnotations.openMocks(this);
         root = INITIAL_CONTENT;
         definitionBuilder = root.builder();
-        definitionBuilder.setProperty("type", Lucene9IndexConstants.TYPE_LUCENE9);
+        definitionBuilder.setProperty("type", LuceneNgIndexConstants.TYPE_LUCENE9);
 
-        Lucene9IndexTracker tracker = new Lucene9IndexTracker();
-        provider = new Lucene9IndexEditorProvider(tracker);
+        LuceneNgIndexTracker tracker = new LuceneNgIndexTracker();
+        provider = new LuceneNgIndexEditorProvider(tracker);
     }
 
     @Test
@@ -1348,7 +1348,7 @@ public class Lucene9IndexEditorProviderTest {
     @Test
     public void testGetEditorForLucene9Type() throws Exception {
         Editor editor = provider.getIndexEditor(
-            Lucene9IndexConstants.TYPE_LUCENE9,
+            LuceneNgIndexConstants.TYPE_LUCENE9,
             definitionBuilder,
             root,
             callback);
@@ -1373,14 +1373,14 @@ public class Lucene9IndexEditorProviderTest {
 
 Run:
 ```bash
-mvn test -Dtest=Lucene9IndexEditorProviderTest
+mvn test -Dtest=LuceneNgIndexEditorProviderTest
 ```
 
 Expected: `Compilation failure`
 
 ### Step 3: Create IndexEditorProvider
 
-**File:** `oak-search-lucene9/src/main/java/org/apache/jackrabbit/oak/plugins/index/lucene9/Lucene9IndexEditorProvider.java`
+**File:** `oak-search-luceneNg/src/main/java/org/apache/jackrabbit/oak/plugins/index/luceneNg/LuceneNgIndexEditorProvider.java`
 
 ```java
 /*
@@ -1417,12 +1417,12 @@ import org.slf4j.LoggerFactory;
 /**
  * IndexEditorProvider for Lucene 9 indexes.
  */
-public class Lucene9IndexEditorProvider implements IndexEditorProvider {
-    private static final Logger LOG = LoggerFactory.getLogger(Lucene9IndexEditorProvider.class);
+public class LuceneNgIndexEditorProvider implements IndexEditorProvider {
+    private static final Logger LOG = LoggerFactory.getLogger(LuceneNgIndexEditorProvider.class);
 
-    private final Lucene9IndexTracker indexTracker;
+    private final LuceneNgIndexTracker indexTracker;
 
-    public Lucene9IndexEditorProvider(@NotNull Lucene9IndexTracker indexTracker) {
+    public LuceneNgIndexEditorProvider(@NotNull LuceneNgIndexTracker indexTracker) {
         this.indexTracker = indexTracker;
     }
 
@@ -1434,7 +1434,7 @@ public class Lucene9IndexEditorProvider implements IndexEditorProvider {
                                  @NotNull IndexUpdateCallback callback)
             throws CommitFailedException {
 
-        if (!Lucene9IndexConstants.TYPE_LUCENE9.equals(type)) {
+        if (!LuceneNgIndexConstants.TYPE_LUCENE9.equals(type)) {
             return null;
         }
 
@@ -1448,10 +1448,10 @@ public class Lucene9IndexEditorProvider implements IndexEditorProvider {
 
         LOG.debug("Creating Lucene 9 index editor for: {}", indexPath);
 
-        Lucene9IndexDefinition indexDefinition =
-            new Lucene9IndexDefinition(root, definition.getNodeState(), indexPath);
+        LuceneNgIndexDefinition indexDefinition =
+            new LuceneNgIndexDefinition(root, definition.getNodeState(), indexPath);
 
-        // TODO: Create and return Lucene9IndexEditor
+        // TODO: Create and return LuceneNgIndexEditor
         return null;  // Stub for now
     }
 
@@ -1466,7 +1466,7 @@ public class Lucene9IndexEditorProvider implements IndexEditorProvider {
 
 Run:
 ```bash
-mvn test -Dtest=Lucene9IndexEditorProviderTest
+mvn test -Dtest=LuceneNgIndexEditorProviderTest
 ```
 
 Expected: `Tests run: 3, Failures: 0, Errors: 0, Skipped: 0`
@@ -1476,9 +1476,9 @@ Note: testGetEditorForLucene9Type will pass even though we return null, because 
 ### Step 5: Commit EditorProvider
 
 ```bash
-git add oak-search-lucene9/src/main/java/org/apache/jackrabbit/oak/plugins/index/lucene9/Lucene9IndexEditorProvider.java
-git add oak-search-lucene9/src/test/java/org/apache/jackrabbit/oak/plugins/index/lucene9/Lucene9IndexEditorProviderTest.java
-git commit -m "feat: add Lucene9IndexEditorProvider
+git add oak-search-luceneNg/src/main/java/org/apache/jackrabbit/oak/plugins/index/luceneNg/LuceneNgIndexEditorProvider.java
+git add oak-search-luceneNg/src/test/java/org/apache/jackrabbit/oak/plugins/index/luceneNg/LuceneNgIndexEditorProviderTest.java
+git commit -m "feat: add LuceneNgIndexEditorProvider
 
 Index editor provider handles index type routing for lucene9.
 Returns null for now - editor implementation comes next.
@@ -1495,8 +1495,8 @@ Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>"
 Due to length constraints, I'll provide the structure. The full implementation would follow similar TDD pattern:
 
 **Files to create:**
-1. `Lucene9IndexEditor.java` - Main editor implementation
-2. `Lucene9IndexWriter.java` - Wraps Lucene IndexWriter
+1. `LuceneNgIndexEditor.java` - Main editor implementation
+2. `LuceneNgIndexWriter.java` - Wraps Lucene IndexWriter
 3. `Lucene9DocumentBuilder.java` - Builds Lucene documents from Oak nodes
 4. Tests for each
 
@@ -1520,7 +1520,7 @@ mvn clean test
 mvn clean package
 
 # Check coverage
-ls -la oak-search-lucene9/target/
+ls -la oak-search-luceneNg/target/
 ```
 
 Expected: BUILD SUCCESS with all tests passing

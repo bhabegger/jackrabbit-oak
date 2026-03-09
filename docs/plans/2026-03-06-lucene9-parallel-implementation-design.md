@@ -8,7 +8,7 @@
 
 This document defines the design for adding Lucene 9 indexing capability to Jackrabbit Oak as a parallel implementation alongside the existing Lucene 4.7.2 (oak-lucene) and Elasticsearch (oak-search-elastic) implementations. The solution includes multi-target write capability and index version flipping functionality.
 
-**Key Innovation:** Separation of index definition from storage location - Lucene 9 indexes store data in `/var/indexing/lucene9/<indexName>/` rather than under the index definition node.
+**Key Innovation:** Separation of index definition from storage location - Lucene 9 indexes store data in `/var/indexing/lucene/<indexName>/` rather than under the index definition node.
 
 ## Table of Contents
 
@@ -101,7 +101,7 @@ Current types:
 ## Approved Design Decisions
 
 ### 1. Architecture
-**Decision:** Minimal Clone Pattern - create `oak-search-lucene9` module (~60-80 files) following the Elasticsearch model.
+**Decision:** Minimal Clone Pattern - create `oak-search-luceneNg` module (~60-80 files) following the Elasticsearch model.
 
 **Rationale:**
 - Clean, maintainable codebase
@@ -110,7 +110,7 @@ Current types:
 - Easy to understand and maintain
 
 ### 2. Module Name
-**Decision:** `oak-search-lucene9`
+**Decision:** `oak-search-luceneNg`
 
 **Rationale:** Follows the `oak-search-elastic` naming pattern.
 
@@ -129,7 +129,7 @@ activeTarget = "lucene47"                // Query from lucene47
 ### 4. Storage Location
 **Decision:** Implementation-specific storage locations:
 - **Lucene 4.7:** Unchanged, uses `:data` under index definition
-- **Lucene 9:** `/var/indexing/lucene9/<indexName>/` (auto-created if missing)
+- **Lucene 9:** `/var/indexing/lucene/<indexName>/` (auto-created if missing)
 - **Elasticsearch:** Remote cluster (unchanged)
 
 **Rationale:**
@@ -141,7 +141,7 @@ activeTarget = "lucene47"                // Query from lucene47
 **Path Derivation:**
 ```java
 // Auto-derived for Lucene 9
-String storagePath = "/var/indexing/lucene9/" + indexName;
+String storagePath = "/var/indexing/lucene/" + indexName;
 ```
 
 ### 5. Dependencies
@@ -212,7 +212,7 @@ String storagePath = "/var/indexing/lucene9/" + indexName;
 ### Module Structure
 
 ```
-oak-search-lucene9/
+oak-search-luceneNg/
 ├── pom.xml
 │   └── Dependencies:
 │       ├── org.apache.lucene:lucene-core:9.11.1
@@ -220,37 +220,37 @@ oak-search-lucene9/
 │       ├── org.apache.lucene:lucene-analyzers-common:9.11.1
 │       └── oak-search (for common abstractions)
 │
-└── src/main/java/.../lucene9/
-    ├── Lucene9IndexProviderService.java        ← OSGi service
-    ├── Lucene9IndexDefinition.java             ← Extends IndexDefinition
-    ├── Lucene9IndexTracker.java                ← Manages index lifecycle
+└── src/main/java/.../luceneNg/
+    ├── LuceneNgIndexProviderService.java        ← OSGi service
+    ├── LuceneNgIndexDefinition.java             ← Extends IndexDefinition
+    ├── LuceneNgIndexTracker.java                ← Manages index lifecycle
     │
     ├── index/                                   ← Write path
-    │   ├── Lucene9IndexEditorProvider.java     ← Implements IndexEditorProvider
-    │   ├── Lucene9IndexEditor.java
-    │   ├── Lucene9IndexWriter.java
-    │   └── Lucene9Directory.java               ← Custom Directory for /var storage
+    │   ├── LuceneNgIndexEditorProvider.java     ← Implements IndexEditorProvider
+    │   ├── LuceneNgIndexEditor.java
+    │   ├── LuceneNgIndexWriter.java
+    │   └── OakDirectory.java               ← Custom Directory for /var storage
     │
     └── query/                                   ← Read path
-        ├── Lucene9IndexProvider.java           ← Implements QueryIndexProvider
-        ├── Lucene9Index.java
-        ├── Lucene9Planner.java
-        └── Lucene9Searcher.java
+        ├── LuceneNgIndexProvider.java           ← Implements QueryIndexProvider
+        ├── LuceneNgIndex.java
+        ├── LuceneNgPlanner.java
+        └── LuceneNgSearcher.java
 ```
 
 ### Key Components
 
-#### 1. Lucene9Directory
-Custom Lucene `Directory` implementation that stores files in `/var/indexing/lucene9/<indexName>/`:
+#### 1. OakDirectory
+Custom Lucene `Directory` implementation that stores files in `/var/indexing/lucene/<indexName>/`:
 
 ```java
-public class Lucene9Directory extends Directory {
+public class OakDirectory extends Directory {
     private final NodeBuilder varBuilder;
     private final String indexName;
 
-    public Lucene9Directory(NodeStore nodeStore, String indexName) {
+    public OakDirectory(NodeStore nodeStore, String indexName) {
         this.indexName = indexName;
-        // Navigate to /var/indexing/lucene9/<indexName>
+        // Navigate to /var/indexing/lucene/<indexName>
         // Auto-create if missing
         this.varBuilder = getOrCreateVarNode(nodeStore, indexName);
     }
@@ -267,11 +267,11 @@ public class Lucene9Directory extends Directory {
 }
 ```
 
-#### 2. Lucene9IndexEditorProvider
+#### 2. LuceneNgIndexEditorProvider
 Handles write operations:
 
 ```java
-public class Lucene9IndexEditorProvider implements IndexEditorProvider {
+public class LuceneNgIndexEditorProvider implements IndexEditorProvider {
 
     @Override
     public Editor getIndexEditor(String type, NodeBuilder definition,
@@ -283,27 +283,27 @@ public class Lucene9IndexEditorProvider implements IndexEditorProvider {
         String indexPath = getIndexPath(callback);
         String indexName = PathUtils.getName(indexPath);
 
-        Lucene9IndexDefinition indexDef =
-            new Lucene9IndexDefinition(root, definition.getNodeState(), indexPath);
+        LuceneNgIndexDefinition indexDef =
+            new LuceneNgIndexDefinition(root, definition.getNodeState(), indexPath);
 
-        Lucene9Directory directory =
-            new Lucene9Directory(getNodeStore(callback), indexName);
+        OakDirectory directory =
+            new OakDirectory(getNodeStore(callback), indexName);
 
-        return new Lucene9IndexEditor(indexDef, directory, callback);
+        return new LuceneNgIndexEditor(indexDef, directory, callback);
     }
 }
 ```
 
-#### 3. Lucene9IndexProvider
+#### 3. LuceneNgIndexProvider
 Handles query operations:
 
 ```java
-public class Lucene9IndexProvider implements QueryIndexProvider {
-    private final Lucene9IndexTracker indexTracker;
+public class LuceneNgIndexProvider implements QueryIndexProvider {
+    private final LuceneNgIndexTracker indexTracker;
 
     @Override
     public List<? extends QueryIndex> getQueryIndexes(NodeState nodeState) {
-        return List.of(new Lucene9Index(indexTracker));
+        return List.of(new LuceneNgIndex(indexTracker));
     }
 }
 ```
@@ -331,7 +331,7 @@ public class Lucene9IndexProvider implements QueryIndexProvider {
   - async = ["async"]
   (NO :data node here)
 
-/var/indexing/lucene9/myIndex/
+/var/indexing/lucene/myIndex/
   - dirListing = ["segments_1", "_0.cfs", ...]
   + segments_1
     - jcr:data = <blob>
@@ -350,7 +350,7 @@ public class Lucene9IndexProvider implements QueryIndexProvider {
   + segments_1
   + ...
 
-/var/indexing/lucene9/myIndex/         ← Lucene 9 storage (separate)
+/var/indexing/lucene/myIndex/         ← Lucene 9 storage (separate)
   + segments_1
   + ...
 ```
@@ -601,7 +601,7 @@ public class ActiveTargetValidator extends DefaultEditor {
     }
 
     private boolean checkLucene9Ready() {
-        // Check if /var/indexing/lucene9/<indexName>/ exists and has index files
+        // Check if /var/indexing/lucene/<indexName>/ exists and has index files
         NodeState var = root.getChildNode("var");
         if (!var.exists()) return false;
 
@@ -669,19 +669,19 @@ public interface IndexFlipperMBean {
 ### Phase 1: Core Lucene 9 Module (4 weeks)
 
 **Scope:**
-- Create oak-search-lucene9 module structure
+- Create oak-search-luceneNg module structure
 - Implement basic write path (IndexEditorProvider, IndexEditor)
-- Implement Lucene9Directory (storage in /var/indexing/lucene9/)
+- Implement OakDirectory (storage in /var/indexing/lucene/)
 - Implement basic read path (QueryIndexProvider, Index, Planner)
 - Async-only indexing (no NRT)
 - OSGi service registration
 
 **Deliverables:**
-- ✅ `oak-search-lucene9` module with pom.xml
-- ✅ `Lucene9IndexEditorProvider` (writes)
-- ✅ `Lucene9IndexProvider` (queries)
-- ✅ `Lucene9Directory` (/var storage)
-- ✅ `Lucene9IndexDefinition`
+- ✅ `oak-search-luceneNg` module with pom.xml
+- ✅ `LuceneNgIndexEditorProvider` (writes)
+- ✅ `LuceneNgIndexProvider` (queries)
+- ✅ `OakDirectory` (/var storage)
+- ✅ `LuceneNgIndexDefinition`
 - ✅ Unit tests
 - ✅ Integration test: full indexing + query roundtrip
 
@@ -689,7 +689,7 @@ public interface IndexFlipperMBean {
 - Can create index with `type="lucene9"`
 - Async indexer indexes content
 - Queries return correct results
-- Index stored in `/var/indexing/lucene9/<indexName>/`
+- Index stored in `/var/indexing/lucene/<indexName>/`
 
 ### Phase 2: Multi-Target Write (2 weeks)
 
@@ -811,7 +811,7 @@ public interface IndexFlipperMBean {
 
 **Storage:**
 - Definition: `/oak:index/myIndex`
-- Data: `/var/indexing/lucene9/myIndex/`
+- Data: `/var/indexing/lucene/myIndex/`
 
 ### Multi-Target Migration Index
 
@@ -838,7 +838,7 @@ public interface IndexFlipperMBean {
 **Storage:**
 - Definition: `/oak:index/myIndex`
 - Lucene47 data: `/oak:index/myIndex/:data/`
-- Lucene9 data: `/var/indexing/lucene9/myIndex/`
+- Lucene9 data: `/var/indexing/lucene/myIndex/`
 
 **Writes:** Both lucene47 and lucene9
 **Queries:** lucene47 (activeTarget)
@@ -867,7 +867,7 @@ public interface IndexFlipperMBean {
 
 **Storage:**
 - Definition: `/oak:index/myIndex`
-- Lucene9 data: `/var/indexing/lucene9/myIndex/`
+- Lucene9 data: `/var/indexing/lucene/myIndex/`
 - Lucene47 data: `/oak:index/myIndex/:data/` (remains, manual cleanup)
 
 **Writes:** lucene9 only
@@ -896,8 +896,8 @@ public interface IndexFlipperMBean {
 ### Step-by-Step Migration: Lucene 4.7 → Lucene 9
 
 #### Prerequisites
-1. Oak includes oak-search-lucene9 bundle
-2. `/var/indexing/lucene9/` will be auto-created
+1. Oak includes oak-search-luceneNg bundle
+2. `/var/indexing/lucene/` will be auto-created
 3. Index health monitoring in place
 
 #### Step 1: Enable Shadow Writing
@@ -1014,7 +1014,7 @@ If issues discovered in Phase 2:
 
 ### Phase 1
 - ✅ Can create and query lucene9 indexes
-- ✅ Index data stored in /var/indexing/lucene9/
+- ✅ Index data stored in /var/indexing/lucene/
 - ✅ No changes to oak-lucene code
 
 ### Phase 2
@@ -1038,7 +1038,7 @@ If issues discovered in Phase 2:
 ## Risks and Mitigations
 
 ### Risk: /var not existing in all Oak deployments
-**Mitigation:** Auto-create /var/indexing/lucene9/ if missing (approved)
+**Mitigation:** Auto-create /var/indexing/lucene/ if missing (approved)
 
 ### Risk: Storage separation increases complexity
 **Mitigation:** Clear documentation, simple path derivation logic
@@ -1058,7 +1058,7 @@ If issues discovered in Phase 2:
 
 This design provides a clean, safe path to adding Lucene 9 indexing to Jackrabbit Oak. Key innovations:
 
-1. **Storage Separation:** `/var/indexing/lucene9/` breaks the definition/storage coupling
+1. **Storage Separation:** `/var/indexing/lucene/` breaks the definition/storage coupling
 2. **Multi-Target Writing:** Enables safe migrations and A/B testing
 3. **Fail-Fast Validation:** Prevents accidental misconfigurations
 4. **No Embedded Code:** Ensures future upgradability
@@ -1067,7 +1067,7 @@ This design provides a clean, safe path to adding Lucene 9 indexing to Jackrabbi
 **Next Steps:**
 1. ✅ Design approved
 2. Create implementation plan (detailed task breakdown)
-3. Set up oak-search-lucene9 module skeleton
+3. Set up oak-search-luceneNg module skeleton
 4. Begin Phase 1 implementation
 
 ---
