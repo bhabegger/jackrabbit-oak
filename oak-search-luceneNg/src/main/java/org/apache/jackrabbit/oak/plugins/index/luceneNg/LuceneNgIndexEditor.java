@@ -182,11 +182,18 @@ public class LuceneNgIndexEditor implements Editor {
                 continue;
             }
 
-            // Index string properties
-            if (prop.getType().tag() == org.apache.jackrabbit.oak.api.Type.STRING.tag()) {
+            // Index string properties (single value)
+            if (prop.getType() == org.apache.jackrabbit.oak.api.Type.STRING) {
                 String value = prop.getValue(org.apache.jackrabbit.oak.api.Type.STRING);
                 doc.add(new TextField(propName, value, Field.Store.NO));
                 LOG.trace("Indexed property: {} = {}", propName, value);
+            }
+            // Index multi-value string properties
+            else if (prop.getType() == org.apache.jackrabbit.oak.api.Type.STRINGS) {
+                for (String value : prop.getValue(org.apache.jackrabbit.oak.api.Type.STRINGS)) {
+                    doc.add(new TextField(propName, value, Field.Store.NO));
+                    LOG.trace("Indexed multi-value property: {} = {}", propName, value);
+                }
             }
         }
 
