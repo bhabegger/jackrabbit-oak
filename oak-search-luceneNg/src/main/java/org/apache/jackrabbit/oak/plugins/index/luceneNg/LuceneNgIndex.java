@@ -16,30 +16,39 @@
  */
 package org.apache.jackrabbit.oak.plugins.index.luceneNg;
 
+import org.apache.jackrabbit.oak.api.PropertyValue;
+import org.apache.jackrabbit.oak.api.Type;
 import org.apache.jackrabbit.oak.plugins.index.cursor.Cursors;
 import org.apache.jackrabbit.oak.plugins.index.search.FieldNames;
+import org.apache.jackrabbit.oak.plugins.memory.PropertyValues;
 import org.apache.jackrabbit.oak.spi.query.Cursor;
 import org.apache.jackrabbit.oak.spi.query.Filter;
 import org.apache.jackrabbit.oak.spi.query.QueryIndex;
 import org.apache.jackrabbit.oak.spi.query.fulltext.*;
 import org.apache.jackrabbit.oak.spi.state.NodeBuilder;
 import org.apache.jackrabbit.oak.spi.state.NodeState;
+import org.apache.jackrabbit.util.ISO8601;
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
+import org.apache.lucene.document.DoublePoint;
+import org.apache.lucene.document.LongPoint;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.search.*;
 import org.apache.lucene.search.BooleanClause.Occur;
+import org.apache.lucene.util.BytesRef;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.jcr.PropertyType;
 import java.io.IOException;
 import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 
 /**
  * Lucene 9 query index implementation.
@@ -140,21 +149,244 @@ public class LuceneNgIndex implements QueryIndex {
             Analyzer analyzer = new StandardAnalyzer();
             Query ftQuery = getFullTextQuery(ft, analyzer);
             LOG.debug("Building full-text query: {}", ftQuery);
+
+            // Combine with property restrictions if present
+            List<Filter.PropertyRestriction> propRestrictions = new ArrayList<>(filter.getPropertyRestrictions());
+            if (!propRestrictions.isEmpty()) {
+                BooleanQuery.Builder bq = new BooleanQuery.Builder();
+                bq.add(ftQuery, Occur.MUST);
+                for (Filter.PropertyRestriction pr : propRestrictions) {
+                    Query propQuery = createPropertyQuery(pr);
+                    if (propQuery != null) {
+                        bq.add(propQuery, Occur.MUST);
+                    }
+                }
+                return bq.build();
+            }
             return ftQuery;
         }
 
-        // Handle property restriction queries
-        for (Filter.PropertyRestriction pr : filter.getPropertyRestrictions()) {
-            // Handle equality constraints
-            if (pr.first != null && pr.first.equals(pr.last)) {
-                String value = pr.first.getValue(org.apache.jackrabbit.oak.api.Type.STRING);
-                LOG.debug("Building property query for {}={}", pr.propertyName, value);
-                // Don't lowercase - StringField stores exact values
-                return new TermQuery(new Term(pr.propertyName, value));
-            }
+        // Handle property restriction queries only
+        List<Filter.PropertyRestriction> propRestrictions = new ArrayList<>(filter.getPropertyRestrictions());
+        if (propRestrictions.isEmpty()) {
+            throw new IllegalArgumentException("No supported constraint found");
         }
 
-        throw new IllegalArgumentException("No supported constraint found");
+        if (propRestrictions.size() == 1) {
+            return createPropertyQuery(propRestrictions.get(0));
+        }
+
+        // Multiple property restrictions - combine with AND
+        BooleanQuery.Builder bq = new BooleanQuery.Builder();
+        for (Filter.PropertyRestriction pr : propRestrictions) {
+            Query propQuery = createPropertyQuery(pr);
+            if (propQuery != null) {
+                bq.add(propQuery, Occur.MUST);
+            }
+        }
+        return bq.build();
+    }
+
+    /**
+     * Creates a Lucene Query for a property restriction.
+     * Handles equality, range, NOT, and IN queries.
+     * Based on legacy LuceneIndex pattern.
+     */
+    private Query createPropertyQuery(Filter.PropertyRestriction pr) {
+        String propertyName = pr.propertyName;
+
+        // Skip special properties
+        if (propertyName.startsWith("rep:") || propertyName.startsWith("oak:")) {
+            return null;
+        }
+
+        // Determine property type from first/last/not value
+        int propertyType = determinePropertyType(pr);
+
+        switch (propertyType) {
+            case javax.jcr.PropertyType.LONG:
+                return createLongQuery(propertyName, pr);
+            case javax.jcr.PropertyType.DOUBLE:
+                return createDoubleQuery(propertyName, pr);
+            case javax.jcr.PropertyType.DATE:
+                return createDateQuery(propertyName, pr);
+            case javax.jcr.PropertyType.BOOLEAN:
+                return createBooleanQuery(propertyName, pr);
+            default:
+                return createStringQuery(propertyName, pr);
+        }
+    }
+
+    private int determinePropertyType(Filter.PropertyRestriction pr) {
+        org.apache.jackrabbit.oak.api.PropertyValue value = pr.first != null ? pr.first :
+                          (pr.last != null ? pr.last : pr.not);
+        if (value == null) {
+            return javax.jcr.PropertyType.STRING;
+        }
+        return value.getType().tag();
+    }
+
+    private Query createLongQuery(String propertyName, Filter.PropertyRestriction pr) {
+        Long first = pr.first != null ? pr.first.getValue(org.apache.jackrabbit.oak.api.Type.LONG) : null;
+        Long last = pr.last != null ? pr.last.getValue(org.apache.jackrabbit.oak.api.Type.LONG) : null;
+        Long not = pr.not != null ? pr.not.getValue(org.apache.jackrabbit.oak.api.Type.LONG) : null;
+
+        if (pr.first != null && pr.first.equals(pr.last) && pr.firstIncluding && pr.lastIncluding) {
+            // Equality: age = 25
+            return org.apache.lucene.document.LongPoint.newExactQuery(propertyName, first);
+        } else if (pr.first != null && pr.last != null) {
+            // Range with both bounds: age BETWEEN 10 AND 100
+            long lowerValue = pr.firstIncluding ? first : Math.addExact(first, 1);
+            long upperValue = pr.lastIncluding ? last : Math.addExact(last, -1);
+            return org.apache.lucene.document.LongPoint.newRangeQuery(propertyName, lowerValue, upperValue);
+        } else if (pr.first != null) {
+            // Lower bound only: age >= 25 or age > 25
+            long lowerValue = pr.firstIncluding ? first : Math.addExact(first, 1);
+            return org.apache.lucene.document.LongPoint.newRangeQuery(propertyName, lowerValue, Long.MAX_VALUE);
+        } else if (pr.last != null) {
+            // Upper bound only: age <= 50 or age < 50
+            long upperValue = pr.lastIncluding ? last : Math.addExact(last, -1);
+            return org.apache.lucene.document.LongPoint.newRangeQuery(propertyName, Long.MIN_VALUE, upperValue);
+        } else if (pr.list != null) {
+            // IN query: age IN (10, 20, 30)
+            long[] values = pr.list.stream()
+                .map(pv -> pv.getValue(org.apache.jackrabbit.oak.api.Type.LONG))
+                .mapToLong(Long::longValue)
+                .toArray();
+            return org.apache.lucene.document.LongPoint.newSetQuery(propertyName, values);
+        } else if (pr.isNot && not != null) {
+            // NOT equal: age != 25
+            BooleanQuery.Builder bq = new BooleanQuery.Builder();
+            bq.add(new MatchAllDocsQuery(), Occur.MUST);
+            bq.add(org.apache.lucene.document.LongPoint.newExactQuery(propertyName, not), Occur.MUST_NOT);
+            return bq.build();
+        }
+
+        throw new IllegalArgumentException("Unsupported property restriction: " + pr);
+    }
+
+    private Query createDoubleQuery(String propertyName, Filter.PropertyRestriction pr) {
+        Double first = pr.first != null ? pr.first.getValue(org.apache.jackrabbit.oak.api.Type.DOUBLE) : null;
+        Double last = pr.last != null ? pr.last.getValue(org.apache.jackrabbit.oak.api.Type.DOUBLE) : null;
+        Double not = pr.not != null ? pr.not.getValue(org.apache.jackrabbit.oak.api.Type.DOUBLE) : null;
+
+        if (pr.first != null && pr.first.equals(pr.last) && pr.firstIncluding && pr.lastIncluding) {
+            return org.apache.lucene.document.DoublePoint.newExactQuery(propertyName, first);
+        } else if (pr.first != null && pr.last != null) {
+            double lowerValue = pr.firstIncluding ? first : Math.nextUp(first);
+            double upperValue = pr.lastIncluding ? last : Math.nextDown(last);
+            return org.apache.lucene.document.DoublePoint.newRangeQuery(propertyName, lowerValue, upperValue);
+        } else if (pr.first != null) {
+            double lowerValue = pr.firstIncluding ? first : Math.nextUp(first);
+            return org.apache.lucene.document.DoublePoint.newRangeQuery(propertyName, lowerValue, Double.MAX_VALUE);
+        } else if (pr.last != null) {
+            double upperValue = pr.lastIncluding ? last : Math.nextDown(last);
+            return org.apache.lucene.document.DoublePoint.newRangeQuery(propertyName, -Double.MAX_VALUE, upperValue);
+        } else if (pr.list != null) {
+            double[] values = pr.list.stream()
+                .map(pv -> pv.getValue(org.apache.jackrabbit.oak.api.Type.DOUBLE))
+                .mapToDouble(Double::doubleValue)
+                .toArray();
+            return org.apache.lucene.document.DoublePoint.newSetQuery(propertyName, values);
+        } else if (pr.isNot && not != null) {
+            BooleanQuery.Builder bq = new BooleanQuery.Builder();
+            bq.add(new MatchAllDocsQuery(), Occur.MUST);
+            bq.add(org.apache.lucene.document.DoublePoint.newExactQuery(propertyName, not), Occur.MUST_NOT);
+            return bq.build();
+        }
+
+        throw new IllegalArgumentException("Unsupported property restriction: " + pr);
+    }
+
+    private Query createDateQuery(String propertyName, Filter.PropertyRestriction pr) {
+        // Dates are stored as Long (milliseconds since epoch)
+        Long first = pr.first != null ? parseDateToMillis(pr.first) : null;
+        Long last = pr.last != null ? parseDateToMillis(pr.last) : null;
+        Long not = pr.not != null ? parseDateToMillis(pr.not) : null;
+
+        Filter.PropertyRestriction longPr = new Filter.PropertyRestriction();
+        longPr.propertyName = propertyName;
+        longPr.first = first != null ? org.apache.jackrabbit.oak.plugins.memory.PropertyValues.newLong(first) : null;
+        longPr.last = last != null ? org.apache.jackrabbit.oak.plugins.memory.PropertyValues.newLong(last) : null;
+        longPr.not = not != null ? org.apache.jackrabbit.oak.plugins.memory.PropertyValues.newLong(not) : null;
+        longPr.firstIncluding = pr.firstIncluding;
+        longPr.lastIncluding = pr.lastIncluding;
+        longPr.isNot = pr.isNot;
+        longPr.list = pr.list != null ?
+            pr.list.stream().map(this::parseDateToMillis)
+                .map(org.apache.jackrabbit.oak.plugins.memory.PropertyValues::newLong).collect(java.util.stream.Collectors.toList()) : null;
+
+        return createLongQuery(propertyName, longPr);
+    }
+
+    private Long parseDateToMillis(org.apache.jackrabbit.oak.api.PropertyValue pv) {
+        String dateStr = pv.getValue(org.apache.jackrabbit.oak.api.Type.DATE);
+        try {
+            return org.apache.jackrabbit.util.ISO8601.parse(dateStr).getTimeInMillis();
+        } catch (Exception e) {
+            LOG.error("Failed to parse date: " + dateStr, e);
+            return 0L;
+        }
+    }
+
+    private Query createBooleanQuery(String propertyName, Filter.PropertyRestriction pr) {
+        Boolean first = pr.first != null ? pr.first.getValue(org.apache.jackrabbit.oak.api.Type.BOOLEAN) : null;
+        Boolean not = pr.not != null ? pr.not.getValue(org.apache.jackrabbit.oak.api.Type.BOOLEAN) : null;
+
+        if (pr.first != null && pr.first.equals(pr.last)) {
+            // Equality: isActive = true
+            String value = first.toString();
+            return new TermQuery(new Term(propertyName, value));
+        } else if (pr.isNot && not != null) {
+            // NOT equal: isActive != true
+            String value = not.toString();
+            BooleanQuery.Builder bq = new BooleanQuery.Builder();
+            bq.add(new MatchAllDocsQuery(), Occur.MUST);
+            bq.add(new TermQuery(new Term(propertyName, value)), Occur.MUST_NOT);
+            return bq.build();
+        }
+
+        throw new IllegalArgumentException("Unsupported boolean restriction: " + pr);
+    }
+
+    private Query createStringQuery(String propertyName, Filter.PropertyRestriction pr) {
+        String first = pr.first != null ? pr.first.getValue(org.apache.jackrabbit.oak.api.Type.STRING) : null;
+        String last = pr.last != null ? pr.last.getValue(org.apache.jackrabbit.oak.api.Type.STRING) : null;
+        String not = pr.not != null ? pr.not.getValue(org.apache.jackrabbit.oak.api.Type.STRING) : null;
+
+        if (pr.first != null && pr.first.equals(pr.last) && pr.firstIncluding && pr.lastIncluding) {
+            // Equality: title = 'Oak'
+            return new TermQuery(new Term(propertyName, first));
+        } else if (pr.first != null && pr.last != null) {
+            // String range (lexicographic): title BETWEEN 'A' AND 'Z'
+            return new TermRangeQuery(propertyName,
+                new org.apache.lucene.util.BytesRef(first), new org.apache.lucene.util.BytesRef(last),
+                pr.firstIncluding, pr.lastIncluding);
+        } else if (pr.first != null) {
+            // Lower bound: title >= 'M'
+            return new TermRangeQuery(propertyName,
+                new org.apache.lucene.util.BytesRef(first), null, pr.firstIncluding, true);
+        } else if (pr.last != null) {
+            // Upper bound: title <= 'Z'
+            return new TermRangeQuery(propertyName,
+                null, new org.apache.lucene.util.BytesRef(last), true, pr.lastIncluding);
+        } else if (pr.list != null) {
+            // IN query: title IN ('Oak', 'Pine', 'Elm')
+            BooleanQuery.Builder bq = new BooleanQuery.Builder();
+            for (org.apache.jackrabbit.oak.api.PropertyValue pv : pr.list) {
+                String value = pv.getValue(org.apache.jackrabbit.oak.api.Type.STRING);
+                bq.add(new TermQuery(new Term(propertyName, value)), Occur.SHOULD);
+            }
+            return bq.build();
+        } else if (pr.isNot && not != null) {
+            // NOT equal: title != 'Draft'
+            BooleanQuery.Builder bq = new BooleanQuery.Builder();
+            bq.add(new MatchAllDocsQuery(), Occur.MUST);
+            bq.add(new TermQuery(new Term(propertyName, not)), Occur.MUST_NOT);
+            return bq.build();
+        }
+
+        throw new IllegalArgumentException("Unsupported string restriction: " + pr);
     }
 
     /**

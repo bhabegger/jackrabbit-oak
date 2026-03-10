@@ -23,8 +23,12 @@ import org.apache.jackrabbit.oak.plugins.index.search.FieldNames;
 import org.apache.jackrabbit.oak.spi.commit.Editor;
 import org.apache.jackrabbit.oak.spi.state.NodeBuilder;
 import org.apache.jackrabbit.oak.spi.state.NodeState;
+import org.apache.jackrabbit.util.ISO8601;
 import org.apache.lucene.document.Document;
+import org.apache.lucene.document.DoublePoint;
 import org.apache.lucene.document.Field;
+import org.apache.lucene.document.LongPoint;
+import org.apache.lucene.document.StoredField;
 import org.apache.lucene.document.StringField;
 import org.apache.lucene.document.TextField;
 import org.apache.lucene.index.IndexWriter;
@@ -34,6 +38,7 @@ import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.jcr.PropertyType;
 import java.io.IOException;
 
 /**
@@ -193,7 +198,7 @@ public class LuceneNgIndexEditor implements Editor {
         // Add path as stored field
         doc.add(new StringField("path", path, Field.Store.YES));
 
-        // Index all string properties
+        // Index all properties
         for (PropertyState prop : node.getProperties()) {
             String propName = prop.getName();
 
@@ -202,31 +207,62 @@ public class LuceneNgIndexEditor implements Editor {
                 continue;
             }
 
-            // Index string properties (single value)
-            if (prop.getType() == org.apache.jackrabbit.oak.api.Type.STRING) {
-                String value = prop.getValue(org.apache.jackrabbit.oak.api.Type.STRING);
-                // Add to property-specific field for exact match property queries
-                // Use StringField for exact matching (not tokenized), but only for reasonable-length values
-                // Lucene has a max term length of 32766 bytes
-                if (value.length() < 32000) {
-                    doc.add(new StringField(propName, value, Field.Store.NO));
-                }
-                // Also add analyzed version for full-text search
-                doc.add(new TextField(FieldNames.FULLTEXT, value, Field.Store.NO));
-                LOG.trace("Indexed property: {} = {}", propName, value);
-            }
-            // Index multi-value string properties
-            else if (prop.getType() == org.apache.jackrabbit.oak.api.Type.STRINGS) {
-                for (String value : prop.getValue(org.apache.jackrabbit.oak.api.Type.STRINGS)) {
-                    // Add to property-specific field for exact match property queries
-                    // Use StringField for exact matching (not tokenized), but only for reasonable-length values
-                    if (value.length() < 32000) {
-                        doc.add(new StringField(propName, value, Field.Store.NO));
+            // Handle different property types
+            switch (prop.getType().tag()) {
+                case PropertyType.LONG:
+                    if (!prop.isArray()) {
+                        long value = prop.getValue(org.apache.jackrabbit.oak.api.Type.LONG);
+                        doc.add(new LongPoint(propName, value));
+                        doc.add(new StoredField(propName, value));
                     }
-                    // Also add analyzed version for full-text search
-                    doc.add(new TextField(FieldNames.FULLTEXT, value, Field.Store.NO));
-                    LOG.trace("Indexed multi-value property: {} = {}", propName, value);
-                }
+                    break;
+
+                case PropertyType.DOUBLE:
+                    if (!prop.isArray()) {
+                        double value = prop.getValue(org.apache.jackrabbit.oak.api.Type.DOUBLE);
+                        doc.add(new DoublePoint(propName, value));
+                        doc.add(new StoredField(propName, value));
+                    }
+                    break;
+
+                case PropertyType.DATE:
+                    if (!prop.isArray()) {
+                        String dateStr = prop.getValue(org.apache.jackrabbit.oak.api.Type.DATE);
+                        try {
+                            long millis = org.apache.jackrabbit.util.ISO8601.parse(dateStr).getTimeInMillis();
+                            doc.add(new LongPoint(propName, millis));
+                            doc.add(new StoredField(propName, millis));
+                        } catch (Exception e) {
+                            LOG.error("Failed to parse date: " + dateStr, e);
+                        }
+                    }
+                    break;
+
+                case PropertyType.BOOLEAN:
+                    if (!prop.isArray()) {
+                        boolean value = prop.getValue(org.apache.jackrabbit.oak.api.Type.BOOLEAN);
+                        doc.add(new StringField(propName, String.valueOf(value), Field.Store.NO));
+                    }
+                    break;
+
+                case PropertyType.STRING:
+                    if (!prop.isArray()) {
+                        String value = prop.getValue(org.apache.jackrabbit.oak.api.Type.STRING);
+                        if (value.length() < 32000) {
+                            doc.add(new StringField(propName, value, Field.Store.NO));
+                        }
+                        doc.add(new TextField(FieldNames.FULLTEXT, value, Field.Store.NO));
+                        LOG.trace("Indexed property: {} = {}", propName, value);
+                    } else {
+                        // Multi-value string properties
+                        for (String strValue : prop.getValue(org.apache.jackrabbit.oak.api.Type.STRINGS)) {
+                            if (strValue.length() < 32000) {
+                                doc.add(new StringField(propName, strValue, Field.Store.NO));
+                            }
+                            doc.add(new TextField(FieldNames.FULLTEXT, strValue, Field.Store.NO));
+                        }
+                    }
+                    break;
             }
         }
 
