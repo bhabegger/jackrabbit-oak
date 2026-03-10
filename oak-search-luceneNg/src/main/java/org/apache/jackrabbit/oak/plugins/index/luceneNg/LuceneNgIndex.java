@@ -58,14 +58,25 @@ public class LuceneNgIndex implements QueryIndex {
 
     @Override
     public double getCost(Filter filter, NodeState rootState) {
-        // Simple cost estimation for now
+        // Check if we can handle this query
         FullTextExpression ft = filter.getFullTextConstraint();
-        if (ft == null) {
-            return Double.POSITIVE_INFINITY; // Can't handle non-fulltext queries yet
+
+        // Check for property restrictions we can handle
+        boolean hasPropertyRestriction = false;
+        for (Filter.PropertyRestriction pr : filter.getPropertyRestrictions()) {
+            // We can handle equality constraints on indexed properties
+            if (pr.first != null && pr.first.equals(pr.last)) {
+                hasPropertyRestriction = true;
+                break;
+            }
         }
 
-        // Assume reasonable cost for fulltext queries
-        return 100.0;
+        // Return low cost if we can handle this query, otherwise infinity
+        if (ft != null || hasPropertyRestriction) {
+            return 2.0; // Lower than traversal cost
+        }
+
+        return Double.POSITIVE_INFINITY;
     }
 
     @Override
@@ -77,21 +88,24 @@ public class LuceneNgIndex implements QueryIndex {
                 return Cursors.newPathCursor(Collections.emptyList(), filter.getQueryLimits());
             }
 
-            // Get root builder from rootState for reading index data
-            NodeBuilder rootBuilder = rootState.builder();
+            // Get definition builder from rootState for reading index data
+            // Navigate to the index definition node (e.g., /oak:index/luceneNgTestIndex)
+            NodeBuilder definitionBuilder = getDefinitionBuilder(rootState, indexPath);
 
-            // Get searcher - pass root builder so OakDirectory can access /var/indexing/lucene/...
+            // Get searcher - pass definition builder so OakDirectory can access :data child node
             IndexSearcherHolder holder = new IndexSearcherHolder(
-                rootBuilder,
+                definitionBuilder,
                 indexNode.getDefinition().getIndexName()
             );
             IndexSearcher searcher = holder.getSearcher();
 
             // Build Lucene query from filter
             Query query = buildQuery(filter);
+            LOG.debug("Executing query: {}", query);
 
             // Execute query
             TopDocs docs = searcher.search(query, 100); // Limit to 100 for now
+            LOG.debug("Found {} hits", docs.totalHits);
 
             // Return cursor
             return new LuceneNgCursor(docs, searcher, holder);
@@ -104,15 +118,26 @@ public class LuceneNgIndex implements QueryIndex {
 
     private Query buildQuery(Filter filter) {
         FullTextExpression ft = filter.getFullTextConstraint();
-        if (ft == null) {
-            throw new IllegalArgumentException("No fulltext constraint");
+
+        // Handle full-text queries
+        if (ft != null) {
+            String queryText = extractSearchTerm(ft);
+            LOG.debug("Building full-text query for term: {}", queryText);
+            return new TermQuery(new Term("text", queryText.toLowerCase()));
         }
 
-        // Simple term query for now - extract term from fulltext expression
-        // FullTextExpression returns a FullTextTerm which has getValue()
-        String queryText = extractSearchTerm(ft);
-        LOG.debug("Building query for term: {}", queryText);
-        return new TermQuery(new Term("text", queryText.toLowerCase()));
+        // Handle property restriction queries
+        for (Filter.PropertyRestriction pr : filter.getPropertyRestrictions()) {
+            // Handle equality constraints
+            if (pr.first != null && pr.first.equals(pr.last)) {
+                String value = pr.first.getValue(org.apache.jackrabbit.oak.api.Type.STRING);
+                LOG.debug("Building property query for {}={}", pr.propertyName, value);
+                // Don't lowercase - StringField stores exact values
+                return new TermQuery(new Term(pr.propertyName, value));
+            }
+        }
+
+        throw new IllegalArgumentException("No supported constraint found");
     }
 
     private String extractSearchTerm(FullTextExpression ft) {
@@ -134,5 +159,24 @@ public class LuceneNgIndex implements QueryIndex {
     @Override
     public String getIndexName() {
         return "luceneNg";
+    }
+
+    /**
+     * Navigates to the index definition node from the root state.
+     * Example: indexPath="/oak:index/myIndex" returns builder for that node.
+     */
+    private NodeBuilder getDefinitionBuilder(NodeState rootState, String indexPath) {
+        NodeBuilder builder = rootState.builder();
+
+        // Remove leading slash if present
+        String path = indexPath.startsWith("/") ? indexPath.substring(1) : indexPath;
+
+        // Navigate through path segments
+        String[] segments = path.split("/");
+        for (String segment : segments) {
+            builder = builder.child(segment);
+        }
+
+        return builder;
     }
 }

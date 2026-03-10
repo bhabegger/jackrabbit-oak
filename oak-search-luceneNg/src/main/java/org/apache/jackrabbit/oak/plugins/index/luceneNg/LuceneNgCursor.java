@@ -16,7 +16,7 @@
  */
 package org.apache.jackrabbit.oak.plugins.index.luceneNg;
 
-import org.apache.jackrabbit.oak.spi.query.Cursor;
+import org.apache.jackrabbit.oak.plugins.index.cursor.AbstractCursor;
 import org.apache.jackrabbit.oak.spi.query.IndexRow;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.search.IndexSearcher;
@@ -30,7 +30,7 @@ import java.io.IOException;
 /**
  * Cursor over Lucene 9 search results.
  */
-public class LuceneNgCursor implements Cursor {
+public class LuceneNgCursor extends AbstractCursor {
 
     private static final Logger LOG = LoggerFactory.getLogger(LuceneNgCursor.class);
 
@@ -55,7 +55,8 @@ public class LuceneNgCursor implements Cursor {
         ScoreDoc scoreDoc = docs.scoreDocs[currentIndex++];
 
         try {
-            Document doc = searcher.doc(scoreDoc.doc);
+            // Use Lucene 9 API for reading stored fields
+            Document doc = searcher.storedFields().document(scoreDoc.doc);
             String path = doc.get("path");
 
             return new LuceneNgIndexRow(path, scoreDoc.score);

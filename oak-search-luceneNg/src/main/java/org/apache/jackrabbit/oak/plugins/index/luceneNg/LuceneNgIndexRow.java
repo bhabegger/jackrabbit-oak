@@ -52,6 +52,7 @@ public class LuceneNgIndexRow implements IndexRow {
         if ("jcr:score".equals(columnName)) {
             return PropertyValues.newDouble(score);
         }
+        // Return null for all other properties - this tells Oak to load the actual node
         return null;
     }
 }

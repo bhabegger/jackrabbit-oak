@@ -46,9 +46,10 @@ public class LuceneNgIndexEditor implements Editor {
     private final NodeBuilder definition;
     private final NodeState root;
     private final IndexWriter indexWriter;
+    private final boolean isRoot;
 
     /**
-     * Creates a new LuceneNgIndexEditor.
+     * Creates a new LuceneNgIndexEditor (root editor with new IndexWriter).
      *
      * @param path the path being indexed
      * @param definition the index definition
@@ -60,11 +61,12 @@ public class LuceneNgIndexEditor implements Editor {
         this.path = path;
         this.definition = definition;
         this.root = root;
+        this.isRoot = true;
 
         // Create OakDirectory for this index
-        // Important: Use root.builder() not definition, so index data is stored at /var/indexing/lucene/
+        // Store index data under the definition node at :data, like legacy Lucene
         String indexName = getIndexName(definition);
-        OakDirectory directory = new OakDirectory(root.builder(), indexName, false);
+        OakDirectory directory = new OakDirectory(definition, indexName, false);
 
         // Create IndexWriter with basic config
         IndexWriterConfig config = new IndexWriterConfig();
@@ -73,23 +75,46 @@ public class LuceneNgIndexEditor implements Editor {
         LOG.debug("Created LuceneNgIndexEditor for path: {}", path);
     }
 
+    /**
+     * Creates a child LuceneNgIndexEditor that shares the parent's IndexWriter.
+     *
+     * @param path the path being indexed
+     * @param definition the index definition
+     * @param root the root node state
+     * @param sharedWriter the shared IndexWriter from the parent
+     */
+    private LuceneNgIndexEditor(@NotNull String path,
+                                @NotNull NodeBuilder definition,
+                                @NotNull NodeState root,
+                                @NotNull IndexWriter sharedWriter) {
+        this.path = path;
+        this.definition = definition;
+        this.root = root;
+        this.indexWriter = sharedWriter;
+        this.isRoot = false;
+
+        LOG.debug("Created child LuceneNgIndexEditor for path: {}", path);
+    }
+
     @Override
     public void enter(@NotNull NodeState before, @NotNull NodeState after)
             throws CommitFailedException {
-        // Node is being visited - index its properties
-        try {
-            indexNode(after);
-        } catch (IOException e) {
-            throw new CommitFailedException("Lucene9", 1,
-                    "Failed to index node at " + path, e);
+        // Node is being visited - index its properties if it should be indexed
+        if (shouldIndex(path)) {
+            try {
+                indexNode(after);
+            } catch (IOException e) {
+                throw new CommitFailedException("Lucene9", 1,
+                        "Failed to index node at " + path, e);
+            }
         }
     }
 
     @Override
     public void leave(@NotNull NodeState before, @NotNull NodeState after)
             throws CommitFailedException {
-        // Leaving node - commit if at root
-        if (path.isEmpty() || path.equals("/")) {
+        // Leaving node - commit if this is the root editor
+        if (isRoot) {
             try {
                 indexWriter.commit();
                 indexWriter.close();
@@ -125,16 +150,9 @@ public class LuceneNgIndexEditor implements Editor {
     @Nullable
     public Editor childNodeAdded(@NotNull String name, @NotNull NodeState after)
             throws CommitFailedException {
-        // Child node added - create editor for child
-        try {
-            return new LuceneNgIndexEditor(
-                    path.isEmpty() ? name : path + "/" + name,
-                    definition,
-                    root);
-        } catch (IOException e) {
-            throw new CommitFailedException("Lucene9", 3,
-                    "Failed to create child editor", e);
-        }
+        // Child node added - create child editor sharing our IndexWriter
+        String childPath = buildChildPath(name);
+        return new LuceneNgIndexEditor(childPath, definition, root, indexWriter);
     }
 
     @Override
@@ -143,15 +161,16 @@ public class LuceneNgIndexEditor implements Editor {
                                   @NotNull NodeState before,
                                   @NotNull NodeState after)
             throws CommitFailedException {
-        // Child node changed - create editor for child
-        try {
-            return new LuceneNgIndexEditor(
-                    path.isEmpty() ? name : path + "/" + name,
-                    definition,
-                    root);
-        } catch (IOException e) {
-            throw new CommitFailedException("Lucene9", 4,
-                    "Failed to create child editor", e);
+        // Child node changed - create child editor sharing our IndexWriter
+        String childPath = buildChildPath(name);
+        return new LuceneNgIndexEditor(childPath, definition, root, indexWriter);
+    }
+
+    private String buildChildPath(String name) {
+        if (path.isEmpty() || path.equals("/")) {
+            return "/" + name;
+        } else {
+            return path + "/" + name;
         }
     }
 
@@ -185,13 +204,21 @@ public class LuceneNgIndexEditor implements Editor {
             // Index string properties (single value)
             if (prop.getType() == org.apache.jackrabbit.oak.api.Type.STRING) {
                 String value = prop.getValue(org.apache.jackrabbit.oak.api.Type.STRING);
-                doc.add(new TextField(propName, value, Field.Store.NO));
+                // Add to property-specific field for exact match property queries
+                // Use StringField for exact matching (not tokenized)
+                doc.add(new StringField(propName, value, Field.Store.NO));
+                // Also add analyzed version for full-text search
+                doc.add(new TextField("text", value, Field.Store.NO));
                 LOG.trace("Indexed property: {} = {}", propName, value);
             }
             // Index multi-value string properties
             else if (prop.getType() == org.apache.jackrabbit.oak.api.Type.STRINGS) {
                 for (String value : prop.getValue(org.apache.jackrabbit.oak.api.Type.STRINGS)) {
-                    doc.add(new TextField(propName, value, Field.Store.NO));
+                    // Add to property-specific field for exact match property queries
+                    // Use StringField for exact matching (not tokenized)
+                    doc.add(new StringField(propName, value, Field.Store.NO));
+                    // Also add analyzed version for full-text search
+                    doc.add(new TextField("text", value, Field.Store.NO));
                     LOG.trace("Indexed multi-value property: {} = {}", propName, value);
                 }
             }
@@ -209,5 +236,29 @@ public class LuceneNgIndexEditor implements Editor {
         return definition.hasProperty("name")
                 ? definition.getString("name")
                 : "lucene9-index";
+    }
+
+    /**
+     * Determines if a node at the given path should be indexed.
+     * Filters out system paths and index definitions.
+     */
+    private boolean shouldIndex(String nodePath) {
+        // Skip root node
+        if (nodePath.isEmpty() || nodePath.equals("/") || nodePath.equals("//")) {
+            return false;
+        }
+
+        // Skip /oak:index/* (index definitions)
+        if (nodePath.startsWith("/oak:index") || nodePath.startsWith("//oak:index")) {
+            return false;
+        }
+
+        // Skip /jcr:system/* (system nodes)
+        if (nodePath.startsWith("/jcr:system") || nodePath.startsWith("//jcr:system")) {
+            return false;
+        }
+
+        // Index everything else
+        return true;
     }
 }
