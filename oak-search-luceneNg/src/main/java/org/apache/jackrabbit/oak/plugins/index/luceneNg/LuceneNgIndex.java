@@ -123,7 +123,7 @@ public class LuceneNgIndex implements QueryIndex {
         if (ft != null) {
             String queryText = extractSearchTerm(ft);
             LOG.debug("Building full-text query for term: {}", queryText);
-            return new TermQuery(new Term("text", queryText.toLowerCase()));
+            return new TermQuery(new Term(":fulltext", queryText.toLowerCase()));
         }
 
         // Handle property restriction queries

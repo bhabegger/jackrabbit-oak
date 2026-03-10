@@ -205,20 +205,25 @@ public class LuceneNgIndexEditor implements Editor {
             if (prop.getType() == org.apache.jackrabbit.oak.api.Type.STRING) {
                 String value = prop.getValue(org.apache.jackrabbit.oak.api.Type.STRING);
                 // Add to property-specific field for exact match property queries
-                // Use StringField for exact matching (not tokenized)
-                doc.add(new StringField(propName, value, Field.Store.NO));
-                // Also add analyzed version for full-text search
-                doc.add(new TextField("text", value, Field.Store.NO));
+                // Use StringField for exact matching (not tokenized), but only for reasonable-length values
+                // Lucene has a max term length of 32766 bytes
+                if (value.length() < 32000) {
+                    doc.add(new StringField(propName, value, Field.Store.NO));
+                }
+                // Also add analyzed version for full-text search (use :fulltext to avoid conflicts)
+                doc.add(new TextField(":fulltext", value, Field.Store.NO));
                 LOG.trace("Indexed property: {} = {}", propName, value);
             }
             // Index multi-value string properties
             else if (prop.getType() == org.apache.jackrabbit.oak.api.Type.STRINGS) {
                 for (String value : prop.getValue(org.apache.jackrabbit.oak.api.Type.STRINGS)) {
                     // Add to property-specific field for exact match property queries
-                    // Use StringField for exact matching (not tokenized)
-                    doc.add(new StringField(propName, value, Field.Store.NO));
-                    // Also add analyzed version for full-text search
-                    doc.add(new TextField("text", value, Field.Store.NO));
+                    // Use StringField for exact matching (not tokenized), but only for reasonable-length values
+                    if (value.length() < 32000) {
+                        doc.add(new StringField(propName, value, Field.Store.NO));
+                    }
+                    // Also add analyzed version for full-text search (use :fulltext to avoid conflicts)
+                    doc.add(new TextField(":fulltext", value, Field.Store.NO));
                     LOG.trace("Indexed multi-value property: {} = {}", propName, value);
                 }
             }
