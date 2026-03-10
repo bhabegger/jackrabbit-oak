@@ -20,6 +20,7 @@ import org.apache.jackrabbit.oak.api.CommitFailedException;
 import org.apache.jackrabbit.oak.api.PropertyState;
 import org.apache.jackrabbit.oak.plugins.index.luceneNg.directory.OakDirectory;
 import org.apache.jackrabbit.oak.plugins.index.search.FieldNames;
+import org.apache.jackrabbit.oak.plugins.index.search.PropertyDefinition;
 import org.apache.jackrabbit.oak.spi.commit.Editor;
 import org.apache.jackrabbit.oak.spi.state.NodeBuilder;
 import org.apache.jackrabbit.oak.spi.state.NodeState;
@@ -34,6 +35,7 @@ import org.apache.lucene.document.SortedDocValuesField;
 import org.apache.lucene.document.StoredField;
 import org.apache.lucene.document.StringField;
 import org.apache.lucene.document.TextField;
+import org.apache.lucene.facet.sortedset.SortedSetDocValuesFacetField;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.util.BytesRef;
@@ -275,6 +277,23 @@ public class LuceneNgIndexEditor implements Editor {
                     }
                     break;
             }
+
+            // Add facet field if property is facet-enabled
+            PropertyDefinition propDef = getPropertyDefinition(propName);
+            if (propDef != null && propDef.facet) {
+                if (!prop.isArray()) {
+                    String value = prop.getValue(org.apache.jackrabbit.oak.api.Type.STRING);
+                    String facetFieldName = FieldNames.createFacetFieldName(propName);
+                    doc.add(new SortedSetDocValuesFacetField(facetFieldName, value));
+                    LOG.trace("Indexed facet field: {} = {}", facetFieldName, value);
+                } else {
+                    // Multi-value facets
+                    for (String strValue : prop.getValue(org.apache.jackrabbit.oak.api.Type.STRINGS)) {
+                        String facetFieldName = FieldNames.createFacetFieldName(propName);
+                        doc.add(new SortedSetDocValuesFacetField(facetFieldName, strValue));
+                    }
+                }
+            }
         }
 
         // Only add document if it has indexed fields
@@ -313,5 +332,24 @@ public class LuceneNgIndexEditor implements Editor {
 
         // Index everything else
         return true;
+    }
+
+    /**
+     * Gets property definition from index configuration.
+     * Returns null if property is not indexed or definition not found.
+     */
+    private PropertyDefinition getPropertyDefinition(String propertyName) {
+        try {
+            LuceneNgIndexDefinition indexDef = new LuceneNgIndexDefinition(root, definition.getNodeState(), "/oak:index/" + getIndexName(definition));
+            for (org.apache.jackrabbit.oak.plugins.index.search.IndexDefinition.IndexingRule rule : indexDef.getDefinedRules()) {
+                PropertyDefinition propDef = rule.getConfig(propertyName);
+                if (propDef != null) {
+                    return propDef;
+                }
+            }
+        } catch (Exception e) {
+            LOG.debug("Could not get property definition for: {}", propertyName, e);
+        }
+        return null;
     }
 }
