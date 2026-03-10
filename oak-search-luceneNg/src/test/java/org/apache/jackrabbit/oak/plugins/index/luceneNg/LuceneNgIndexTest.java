@@ -17,6 +17,7 @@
 package org.apache.jackrabbit.oak.plugins.index.luceneNg;
 
 import org.apache.jackrabbit.oak.InitialContentHelper;
+import org.apache.jackrabbit.oak.plugins.index.search.FieldNames;
 import org.apache.jackrabbit.oak.plugins.index.luceneNg.directory.BlobFactory;
 import org.apache.jackrabbit.oak.plugins.index.luceneNg.directory.OakDirectory;
 import org.apache.jackrabbit.oak.spi.query.Cursor;
@@ -34,13 +35,14 @@ import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
 import org.junit.Test;
 
+import java.util.Collections;
+
 import static org.junit.Assert.*;
 import static org.mockito.Mockito.*;
 
 public class LuceneNgIndexTest {
 
     @Test
-    @org.junit.Ignore("Full-text search blocked by Oak constraint evaluation - property queries work (see LuceneNgComparisonTest)")
     public void testBasicTextQuery() throws Exception {
         // Setup: Create index with documents
         NodeBuilder builder = InitialContentHelper.INITIAL_CONTENT.builder();
@@ -48,18 +50,18 @@ public class LuceneNgIndexTest {
         indexDef.setProperty("type", LuceneNgIndexConstants.TYPE_LUCENE9);
 
         // Index some documents
-        OakDirectory directory = new OakDirectory(builder, "test", false);
+        OakDirectory directory = new OakDirectory(indexDef, "test", false);
         IndexWriterConfig config = new IndexWriterConfig(new org.apache.lucene.analysis.standard.StandardAnalyzer());
         IndexWriter writer = new IndexWriter(directory, config);
 
         Document doc1 = new Document();
         doc1.add(new StringField("path", "/content/article1", Field.Store.YES));
-        doc1.add(new TextField(":fulltext", "Apache Jackrabbit Oak", Field.Store.NO));
+        doc1.add(new TextField(FieldNames.FULLTEXT, "Apache Jackrabbit Oak", Field.Store.NO));
         writer.addDocument(doc1);
 
         Document doc2 = new Document();
         doc2.add(new StringField("path", "/content/article2", Field.Store.YES));
-        doc2.add(new TextField(":fulltext", "Lucene search engine", Field.Store.NO));
+        doc2.add(new TextField(FieldNames.FULLTEXT, "Lucene search engine", Field.Store.NO));
         writer.addDocument(doc2);
 
         writer.commit();
@@ -78,6 +80,8 @@ public class LuceneNgIndexTest {
         Filter filter = mock(Filter.class);
         when(filter.getFullTextConstraint()).thenReturn(FullTextParser.parse("*", "Oak"));
         when(filter.getPathRestriction()).thenReturn(PathRestriction.NO_RESTRICTION);
+        when(filter.getPropertyRestrictions()).thenReturn(Collections.emptyList());
+        when(filter.getQueryLimits()).thenReturn(null);
 
         // Execute query
         Cursor cursor = index.query(filter, root);

@@ -17,23 +17,29 @@
 package org.apache.jackrabbit.oak.plugins.index.luceneNg;
 
 import org.apache.jackrabbit.oak.plugins.index.cursor.Cursors;
+import org.apache.jackrabbit.oak.plugins.index.search.FieldNames;
 import org.apache.jackrabbit.oak.spi.query.Cursor;
 import org.apache.jackrabbit.oak.spi.query.Filter;
 import org.apache.jackrabbit.oak.spi.query.QueryIndex;
-import org.apache.jackrabbit.oak.spi.query.fulltext.FullTextExpression;
+import org.apache.jackrabbit.oak.spi.query.fulltext.*;
 import org.apache.jackrabbit.oak.spi.state.NodeBuilder;
 import org.apache.jackrabbit.oak.spi.state.NodeState;
+import org.apache.lucene.analysis.Analyzer;
+import org.apache.lucene.analysis.TokenStream;
+import org.apache.lucene.analysis.standard.StandardAnalyzer;
+import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
 import org.apache.lucene.index.Term;
-import org.apache.lucene.search.IndexSearcher;
-import org.apache.lucene.search.MatchAllDocsQuery;
-import org.apache.lucene.search.Query;
-import org.apache.lucene.search.TermQuery;
-import org.apache.lucene.search.TopDocs;
+import org.apache.lucene.search.*;
+import org.apache.lucene.search.BooleanClause.Occur;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.io.StringReader;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Lucene 9 query index implementation.
@@ -121,9 +127,10 @@ public class LuceneNgIndex implements QueryIndex {
 
         // Handle full-text queries
         if (ft != null) {
-            String queryText = extractSearchTerm(ft);
-            LOG.debug("Building full-text query for term: {}", queryText);
-            return new TermQuery(new Term(":fulltext", queryText.toLowerCase()));
+            Analyzer analyzer = new StandardAnalyzer();
+            Query ftQuery = getFullTextQuery(ft, analyzer);
+            LOG.debug("Building full-text query: {}", ftQuery);
+            return ftQuery;
         }
 
         // Handle property restriction queries
@@ -140,15 +147,101 @@ public class LuceneNgIndex implements QueryIndex {
         throw new IllegalArgumentException("No supported constraint found");
     }
 
-    private String extractSearchTerm(FullTextExpression ft) {
-        // For simple case, get the string representation and extract the term
-        // Format from FullTextParser is "term" (quoted) - remove quotes
-        String ftString = ft.toString();
-        // Remove surrounding quotes if present
-        if (ftString.startsWith("\"") && ftString.endsWith("\"") && ftString.length() > 2) {
-            ftString = ftString.substring(1, ftString.length() - 1);
+    /**
+     * Converts a FullTextExpression to a Lucene Query using visitor pattern.
+     * Based on legacy LuceneIndex implementation.
+     */
+    private static Query getFullTextQuery(FullTextExpression ft, final Analyzer analyzer) {
+        final AtomicReference<Query> result = new AtomicReference<>();
+        ft.accept(new FullTextVisitor() {
+
+            @Override
+            public boolean visit(FullTextContains contains) {
+                return contains.getBase().accept(this);
+            }
+
+            @Override
+            public boolean visit(FullTextOr or) {
+                BooleanQuery.Builder bq = new BooleanQuery.Builder();
+                for (FullTextExpression e : or.list) {
+                    Query x = getFullTextQuery(e, analyzer);
+                    bq.add(x, Occur.SHOULD);
+                }
+                result.set(bq.build());
+                return true;
+            }
+
+            @Override
+            public boolean visit(FullTextAnd and) {
+                BooleanQuery.Builder bq = new BooleanQuery.Builder();
+                for (FullTextExpression e : and.list) {
+                    Query x = getFullTextQuery(e, analyzer);
+                    bq.add(x, Occur.MUST);
+                }
+                result.set(bq.build());
+                return true;
+            }
+
+            @Override
+            public boolean visit(FullTextTerm term) {
+                String propertyName = term.getPropertyName();
+                String text = term.getText();
+                Query q = tokenToQuery(text, propertyName, analyzer);
+                if (q != null) {
+                    result.set(q);
+                }
+                return true;
+            }
+        });
+        return result.get();
+    }
+
+    /**
+     * Tokenizes text and builds appropriate Lucene query (TermQuery or PhraseQuery).
+     * Based on legacy LuceneIndex implementation.
+     */
+    private static Query tokenToQuery(String text, String fieldName, Analyzer analyzer) {
+        List<String> tokens = tokenize(text, analyzer);
+
+        if (tokens.isEmpty()) {
+            return new BooleanQuery.Builder().build();
         }
-        return ftString;
+
+        // Use FieldNames.FULLTEXT if no specific field
+        String field = (fieldName == null || "*".equals(fieldName))
+            ? FieldNames.FULLTEXT
+            : fieldName;
+
+        if (tokens.size() == 1) {
+            // Single token - use TermQuery
+            return new TermQuery(new Term(field, tokens.get(0)));
+        } else {
+            // Multiple tokens - use PhraseQuery
+            PhraseQuery.Builder pq = new PhraseQuery.Builder();
+            for (String token : tokens) {
+                pq.add(new Term(field, token));
+            }
+            return pq.build();
+        }
+    }
+
+    /**
+     * Tokenizes text using the analyzer.
+     * Based on legacy LuceneIndex implementation.
+     */
+    private static List<String> tokenize(String text, Analyzer analyzer) {
+        List<String> tokens = new ArrayList<>();
+        try (TokenStream stream = analyzer.tokenStream(FieldNames.FULLTEXT, new StringReader(text))) {
+            CharTermAttribute termAtt = stream.addAttribute(CharTermAttribute.class);
+            stream.reset();
+            while (stream.incrementToken()) {
+                tokens.add(termAtt.toString());
+            }
+            stream.end();
+        } catch (IOException e) {
+            LOG.error("Failed to tokenize text: " + text, e);
+        }
+        return tokens;
     }
 
     @Override

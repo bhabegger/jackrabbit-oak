@@ -19,6 +19,7 @@ package org.apache.jackrabbit.oak.plugins.index.luceneNg;
 import org.apache.jackrabbit.oak.api.CommitFailedException;
 import org.apache.jackrabbit.oak.api.PropertyState;
 import org.apache.jackrabbit.oak.plugins.index.luceneNg.directory.OakDirectory;
+import org.apache.jackrabbit.oak.plugins.index.search.FieldNames;
 import org.apache.jackrabbit.oak.spi.commit.Editor;
 import org.apache.jackrabbit.oak.spi.state.NodeBuilder;
 import org.apache.jackrabbit.oak.spi.state.NodeState;
@@ -210,8 +211,8 @@ public class LuceneNgIndexEditor implements Editor {
                 if (value.length() < 32000) {
                     doc.add(new StringField(propName, value, Field.Store.NO));
                 }
-                // Also add analyzed version for full-text search (use :fulltext to avoid conflicts)
-                doc.add(new TextField(":fulltext", value, Field.Store.NO));
+                // Also add analyzed version for full-text search
+                doc.add(new TextField(FieldNames.FULLTEXT, value, Field.Store.NO));
                 LOG.trace("Indexed property: {} = {}", propName, value);
             }
             // Index multi-value string properties
@@ -222,8 +223,8 @@ public class LuceneNgIndexEditor implements Editor {
                     if (value.length() < 32000) {
                         doc.add(new StringField(propName, value, Field.Store.NO));
                     }
-                    // Also add analyzed version for full-text search (use :fulltext to avoid conflicts)
-                    doc.add(new TextField(":fulltext", value, Field.Store.NO));
+                    // Also add analyzed version for full-text search
+                    doc.add(new TextField(FieldNames.FULLTEXT, value, Field.Store.NO));
                     LOG.trace("Indexed multi-value property: {} = {}", propName, value);
                 }
             }

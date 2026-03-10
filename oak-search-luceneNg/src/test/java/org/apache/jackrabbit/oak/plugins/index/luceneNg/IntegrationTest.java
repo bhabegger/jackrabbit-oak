@@ -265,7 +265,6 @@ public class IntegrationTest {
     }
 
     @Test
-    @org.junit.Ignore("Full-text search blocked by Oak constraint evaluation - property queries work (see LuceneNgComparisonTest)")
     public void testEndToEndQueryWorkflow() throws Exception {
         // Setup: Create index definition
         NodeBuilder builder = INITIAL_CONTENT.builder();
@@ -289,7 +288,7 @@ public class IntegrationTest {
         // Index the content using OakDirectory directly (simpler than Editor)
         // Use index name "testIndex" to match the index definition
         org.apache.jackrabbit.oak.plugins.index.luceneNg.directory.OakDirectory directory =
-            new org.apache.jackrabbit.oak.plugins.index.luceneNg.directory.OakDirectory(builder, "testIndex", false);
+            new org.apache.jackrabbit.oak.plugins.index.luceneNg.directory.OakDirectory(indexDef, "testIndex", false);
         org.apache.lucene.index.IndexWriterConfig config = new org.apache.lucene.index.IndexWriterConfig(
             new org.apache.lucene.analysis.standard.StandardAnalyzer());
         org.apache.lucene.index.IndexWriter writer = new org.apache.lucene.index.IndexWriter(directory, config);
@@ -297,13 +296,13 @@ public class IntegrationTest {
         // Index article1
         org.apache.lucene.document.Document doc1 = new org.apache.lucene.document.Document();
         doc1.add(new org.apache.lucene.document.StringField("path", "/content/article1", org.apache.lucene.document.Field.Store.YES));
-        doc1.add(new org.apache.lucene.document.TextField(":fulltext", "Apache Jackrabbit Oak is a scalable repository", org.apache.lucene.document.Field.Store.NO));
+        doc1.add(new org.apache.lucene.document.TextField(org.apache.jackrabbit.oak.plugins.index.search.FieldNames.FULLTEXT, "Apache Jackrabbit Oak is a scalable repository", org.apache.lucene.document.Field.Store.NO));
         writer.addDocument(doc1);
 
         // Index article2
         org.apache.lucene.document.Document doc2 = new org.apache.lucene.document.Document();
         doc2.add(new org.apache.lucene.document.StringField("path", "/content/article2", org.apache.lucene.document.Field.Store.YES));
-        doc2.add(new org.apache.lucene.document.TextField(":fulltext", "Lucene 9 provides advanced search capabilities", org.apache.lucene.document.Field.Store.NO));
+        doc2.add(new org.apache.lucene.document.TextField(org.apache.jackrabbit.oak.plugins.index.search.FieldNames.FULLTEXT, "Lucene 9 provides advanced search capabilities", org.apache.lucene.document.Field.Store.NO));
         writer.addDocument(doc2);
 
         writer.commit();
