@@ -24,6 +24,10 @@ import org.apache.jackrabbit.oak.plugins.memory.PropertyValues;
 import org.apache.jackrabbit.oak.spi.query.Cursor;
 import org.apache.jackrabbit.oak.spi.query.Filter;
 import org.apache.jackrabbit.oak.spi.query.QueryIndex;
+import org.apache.jackrabbit.oak.spi.query.QueryIndex.OrderEntry;
+import org.apache.jackrabbit.oak.spi.query.fulltext.FullTextExpression;
+import org.apache.jackrabbit.oak.spi.query.fulltext.FullTextParser;
+import org.apache.jackrabbit.oak.spi.query.QueryIndex.NodeAggregator;
 import org.apache.jackrabbit.oak.spi.query.fulltext.*;
 import org.apache.jackrabbit.oak.spi.state.NodeBuilder;
 import org.apache.jackrabbit.oak.spi.state.NodeState;
@@ -37,6 +41,8 @@ import org.apache.lucene.document.LongPoint;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.search.*;
 import org.apache.lucene.search.BooleanClause.Occur;
+import org.apache.lucene.search.Sort;
+import org.apache.lucene.search.SortField;
 import org.apache.lucene.util.BytesRef;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -54,7 +60,7 @@ import java.util.stream.Collectors;
  * Lucene 9 query index implementation.
  * Executes queries against Lucene 9 indexes.
  */
-public class LuceneNgIndex implements QueryIndex {
+public class LuceneNgIndex implements QueryIndex.AdvanceFulltextQueryIndex {
 
     private static final Logger LOG = LoggerFactory.getLogger(LuceneNgIndex.class);
 
@@ -501,6 +507,195 @@ public class LuceneNgIndex implements QueryIndex {
             LOG.error("Failed to tokenize text: " + text, e);
         }
         return tokens;
+    }
+
+    // ===== AdvancedQueryIndex methods =====
+
+    @Override
+    @org.jetbrains.annotations.Nullable
+    public NodeAggregator getNodeAggregator() {
+        // No aggregation support yet
+        return null;
+    }
+
+    @Override
+    public List<QueryIndex.IndexPlan> getPlans(Filter filter, List<OrderEntry> sortOrder, NodeState rootState) {
+        // Check if we can handle this query
+        FullTextExpression ft = filter.getFullTextConstraint();
+        List<Filter.PropertyRestriction> propRestrictions = new ArrayList<>(filter.getPropertyRestrictions());
+
+        // We can handle full-text queries and/or property restrictions
+        if (ft == null && propRestrictions.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        // Calculate cost
+        double cost = getCost(filter, rootState);
+        if (cost == Double.POSITIVE_INFINITY) {
+            return Collections.emptyList();
+        }
+
+        // Create index plan
+        QueryIndex.IndexPlan.Builder builder = new QueryIndex.IndexPlan.Builder();
+        builder.setCostPerExecution(cost);
+        builder.setCostPerEntry(0.1); // Low per-entry cost
+        builder.setEstimatedEntryCount(100); // Estimate
+        builder.setFilter(filter);
+        builder.setDelayed(false); // Synchronous index
+        builder.setFulltextIndex(ft != null); // Full-text if ft constraint present
+
+        // Set sort order if we can support it
+        if (sortOrder != null && !sortOrder.isEmpty()) {
+            builder.setSortOrder(sortOrder);
+        }
+
+        builder.setDefinition(getDefinitionBuilder(rootState, indexPath).getNodeState());
+        builder.setPathPrefix(indexPath);
+
+        return Collections.singletonList(builder.build());
+    }
+
+    @Override
+    public String getPlanDescription(QueryIndex.IndexPlan plan, NodeState root) {
+        StringBuilder sb = new StringBuilder("lucene9:");
+        sb.append(indexPath);
+
+        Filter filter = plan.getFilter();
+        if (filter != null) {
+            FullTextExpression ft = filter.getFullTextConstraint();
+            if (ft != null) {
+                sb.append(" ft=").append(ft);
+            }
+
+            List<Filter.PropertyRestriction> propRestrictions = new ArrayList<>(filter.getPropertyRestrictions());
+            if (!propRestrictions.isEmpty()) {
+                sb.append(" props=").append(propRestrictions.size());
+            }
+        }
+
+        List<OrderEntry> sortOrder = plan.getSortOrder();
+        if (sortOrder != null && !sortOrder.isEmpty()) {
+            sb.append(" sort=").append(sortOrder.size()).append(" fields");
+        }
+
+        return sb.toString();
+    }
+
+    @Override
+    public Cursor query(QueryIndex.IndexPlan plan, NodeState rootState) {
+        // Extract filter and sort order from plan
+        Filter filter = plan.getFilter();
+        List<OrderEntry> sortOrder = plan.getSortOrder();
+
+        try {
+            // Get index node
+            LuceneNgIndexNode indexNode = tracker.acquireIndexNode(indexPath);
+            if (indexNode == null) {
+                LOG.warn("Index node not found: {}", indexPath);
+                return Cursors.newPathCursor(Collections.emptyList(), filter.getQueryLimits());
+            }
+
+            // Get searcher
+            NodeBuilder definitionBuilder = getDefinitionBuilder(rootState, indexPath);
+            IndexSearcherHolder holder = new IndexSearcherHolder(
+                definitionBuilder,
+                indexNode.getDefinition().getIndexName()
+            );
+            IndexSearcher searcher = holder.getSearcher();
+
+            // Build Lucene query
+            Query query = buildQuery(filter);
+            LOG.debug("Executing query: {}", query);
+
+            // Execute query with or without sorting
+            TopDocs docs;
+            if (sortOrder == null || sortOrder.isEmpty()) {
+                docs = searcher.search(query, 100);
+            } else {
+                Sort sort = createSort(sortOrder, indexNode.getDefinition());
+                LOG.debug("Sorting by: {}", sort);
+                docs = searcher.search(query, 100, sort);
+            }
+
+            LOG.debug("Found {} hits", docs.totalHits);
+
+            // Return cursor
+            return new LuceneNgCursor(docs, searcher, holder);
+
+        } catch (IOException e) {
+            LOG.error("Error executing query on index: " + indexPath, e);
+            return Cursors.newPathCursor(Collections.emptyList(), filter.getQueryLimits());
+        }
+    }
+
+    /**
+     * Creates Lucene Sort from Oak OrderEntry list.
+     * Based on legacy LuceneIndex implementation.
+     */
+    private Sort createSort(List<OrderEntry> sortOrder, LuceneNgIndexDefinition definition) {
+        if (sortOrder == null || sortOrder.isEmpty()) {
+            return null;
+        }
+
+        List<SortField> fields = new ArrayList<>();
+        for (OrderEntry order : sortOrder) {
+            SortField sf = createSortField(order, definition);
+            if (sf != null) {
+                fields.add(sf);
+            }
+        }
+
+        return new Sort(fields.toArray(new SortField[0]));
+    }
+
+    private SortField createSortField(OrderEntry order, LuceneNgIndexDefinition definition) {
+        String propertyName = order.getPropertyName();
+
+        // Special case: sort by relevance score
+        if ("jcr:score".equals(propertyName)) {
+            return SortField.FIELD_SCORE;
+        }
+
+        // Look up property type from index definition
+        int propertyType = getPropertyTypeFromDefinition(definition, propertyName, order.getPropertyType().tag());
+
+        // Determine sort field type based on property type
+        SortField.Type fieldType = getSortFieldType(propertyType);
+
+        // Create sort field (reverse = descending order)
+        boolean reverse = (order.getOrder() == OrderEntry.Order.DESCENDING);
+
+        return new SortField(propertyName, fieldType, reverse);
+    }
+
+    /**
+     * Gets the property type from the index definition, falling back to the provided type.
+     * Based on legacy LucenePropertyIndex.getPropertyType.
+     */
+    private int getPropertyTypeFromDefinition(LuceneNgIndexDefinition definition, String propertyName, int fallbackType) {
+        // Try to find property definition in index rules
+        for (org.apache.jackrabbit.oak.plugins.index.search.IndexDefinition.IndexingRule rule : definition.getDefinedRules()) {
+            org.apache.jackrabbit.oak.plugins.index.search.PropertyDefinition propDef = rule.getConfig(propertyName);
+            if (propDef != null && propDef.index) {
+                return propDef.getType();
+            }
+        }
+        // Fall back to type from OrderEntry
+        return fallbackType;
+    }
+
+    private SortField.Type getSortFieldType(int propertyType) {
+        switch (propertyType) {
+            case PropertyType.LONG:
+            case PropertyType.DATE:
+                return SortField.Type.LONG;
+            case PropertyType.DOUBLE:
+                return SortField.Type.DOUBLE;
+            case PropertyType.BOOLEAN:
+            case PropertyType.STRING:
+            default:
+                return SortField.Type.STRING;
+        }
     }
 
     /**

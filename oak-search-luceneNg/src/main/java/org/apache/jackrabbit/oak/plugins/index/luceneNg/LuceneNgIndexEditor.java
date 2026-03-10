@@ -25,14 +25,18 @@ import org.apache.jackrabbit.oak.spi.state.NodeBuilder;
 import org.apache.jackrabbit.oak.spi.state.NodeState;
 import org.apache.jackrabbit.util.ISO8601;
 import org.apache.lucene.document.Document;
+import org.apache.lucene.document.DoubleDocValuesField;
 import org.apache.lucene.document.DoublePoint;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.LongPoint;
+import org.apache.lucene.document.NumericDocValuesField;
+import org.apache.lucene.document.SortedDocValuesField;
 import org.apache.lucene.document.StoredField;
 import org.apache.lucene.document.StringField;
 import org.apache.lucene.document.TextField;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
+import org.apache.lucene.util.BytesRef;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
@@ -212,16 +216,18 @@ public class LuceneNgIndexEditor implements Editor {
                 case PropertyType.LONG:
                     if (!prop.isArray()) {
                         long value = prop.getValue(org.apache.jackrabbit.oak.api.Type.LONG);
-                        doc.add(new LongPoint(propName, value));
-                        doc.add(new StoredField(propName, value));
+                        doc.add(new LongPoint(propName, value));           // For range queries
+                        doc.add(new StoredField(propName, value));         // For retrieval
+                        doc.add(new NumericDocValuesField(propName, value)); // For sorting
                     }
                     break;
 
                 case PropertyType.DOUBLE:
                     if (!prop.isArray()) {
                         double value = prop.getValue(org.apache.jackrabbit.oak.api.Type.DOUBLE);
-                        doc.add(new DoublePoint(propName, value));
-                        doc.add(new StoredField(propName, value));
+                        doc.add(new DoublePoint(propName, value));                               // For range queries
+                        doc.add(new StoredField(propName, value));                               // For retrieval
+                        doc.add(new DoubleDocValuesField(propName, Double.doubleToRawLongBits(value))); // For sorting
                     }
                     break;
 
@@ -230,8 +236,9 @@ public class LuceneNgIndexEditor implements Editor {
                         String dateStr = prop.getValue(org.apache.jackrabbit.oak.api.Type.DATE);
                         try {
                             long millis = org.apache.jackrabbit.util.ISO8601.parse(dateStr).getTimeInMillis();
-                            doc.add(new LongPoint(propName, millis));
-                            doc.add(new StoredField(propName, millis));
+                            doc.add(new LongPoint(propName, millis));           // For range queries
+                            doc.add(new StoredField(propName, millis));         // For retrieval
+                            doc.add(new NumericDocValuesField(propName, millis)); // For sorting
                         } catch (Exception e) {
                             LOG.error("Failed to parse date: " + dateStr, e);
                         }
@@ -241,7 +248,9 @@ public class LuceneNgIndexEditor implements Editor {
                 case PropertyType.BOOLEAN:
                     if (!prop.isArray()) {
                         boolean value = prop.getValue(org.apache.jackrabbit.oak.api.Type.BOOLEAN);
-                        doc.add(new StringField(propName, String.valueOf(value), Field.Store.NO));
+                        String strValue = String.valueOf(value);
+                        doc.add(new StringField(propName, strValue, Field.Store.NO));           // For queries
+                        doc.add(new SortedDocValuesField(propName, new BytesRef(strValue)));   // For sorting
                     }
                     break;
 
@@ -249,7 +258,8 @@ public class LuceneNgIndexEditor implements Editor {
                     if (!prop.isArray()) {
                         String value = prop.getValue(org.apache.jackrabbit.oak.api.Type.STRING);
                         if (value.length() < 32000) {
-                            doc.add(new StringField(propName, value, Field.Store.NO));
+                            doc.add(new StringField(propName, value, Field.Store.NO));           // For queries
+                            doc.add(new SortedDocValuesField(propName, new BytesRef(value)));   // For sorting
                         }
                         doc.add(new TextField(FieldNames.FULLTEXT, value, Field.Store.NO));
                         LOG.trace("Indexed property: {} = {}", propName, value);
@@ -258,6 +268,7 @@ public class LuceneNgIndexEditor implements Editor {
                         for (String strValue : prop.getValue(org.apache.jackrabbit.oak.api.Type.STRINGS)) {
                             if (strValue.length() < 32000) {
                                 doc.add(new StringField(propName, strValue, Field.Store.NO));
+                                // Note: SortedDocValuesField only supports single value, skipping for multi-value
                             }
                             doc.add(new TextField(FieldNames.FULLTEXT, strValue, Field.Store.NO));
                         }

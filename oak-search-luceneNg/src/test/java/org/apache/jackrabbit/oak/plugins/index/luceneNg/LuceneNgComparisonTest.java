@@ -234,4 +234,98 @@ public class LuceneNgComparisonTest extends AbstractQueryTest {
         assertQuery(query, "xpath",
                     List.of("/content/page1", "/content/page3"));
     }
+
+    // ===== Sorting Tests =====
+
+    @Test
+    public void testSortByLongAscending() throws Exception {
+        createLuceneNgIndex();
+        createTestContent();
+
+        // Sort by age ascending: page1(25), page2(35), page3(45)
+        String query = "select [jcr:path] from [nt:base] where [age] > 0 order by [age]";
+        assertQuery(query, "sql",
+                    List.of("/content/page1", "/content/page2", "/content/page3"));
+    }
+
+    @Test
+    public void testSortByLongDescending() throws Exception {
+        createLuceneNgIndex();
+        createTestContent();
+
+        // Sort by age descending: page3(45), page2(35), page1(25)
+        String query = "select [jcr:path] from [nt:base] where [age] > 0 order by [age] DESC";
+        assertQuery(query, "sql",
+                    List.of("/content/page3", "/content/page2", "/content/page1"));
+    }
+
+    @Test
+    public void testSortByDoubleAscending() throws Exception {
+        createLuceneNgIndex();
+        createTestContent();
+
+        // Sort by price ascending: page1(15.99), page2(45.50), page3(75.00)
+        String query = "select [jcr:path] from [nt:base] where [price] > 0 order by [price]";
+        assertQuery(query, "sql",
+                    List.of("/content/page1", "/content/page2", "/content/page3"));
+    }
+
+    @Test
+    public void testSortByDoubleDescending() throws Exception {
+        createLuceneNgIndex();
+        createTestContent();
+
+        // Sort by price descending: page3(75.00), page2(45.50), page1(15.99)
+        String query = "select [jcr:path] from [nt:base] where [price] > 0 order by [price] DESC";
+        assertQuery(query, "sql",
+                    List.of("/content/page3", "/content/page2", "/content/page1"));
+    }
+
+    @Test
+    public void testSortByStringAscending() throws Exception {
+        createLuceneNgIndex();
+        createTestContent();
+
+        // Sort by title ascending: "Lucene Integration" < "Oak Testing"
+        // page2(Lucene Integration), page1(Oak Testing), page3(Oak Testing)
+        String query = "select [jcr:path] from [nt:base] where [title] is not null order by [title]";
+        assertQuery(query, "sql",
+                    List.of("/content/page2", "/content/page1", "/content/page3"));
+    }
+
+    @Test
+    public void testSortByStringDescending() throws Exception {
+        createLuceneNgIndex();
+        createTestContent();
+
+        // Sort by title descending: "Oak Testing" > "Lucene Integration"
+        // page1(Oak Testing), page3(Oak Testing), page2(Lucene Integration)
+        String query = "select [jcr:path] from [nt:base] where [title] is not null order by [title] DESC";
+        assertQuery(query, "sql",
+                    List.of("/content/page1", "/content/page3", "/content/page2"));
+    }
+
+    @Test
+    public void testMultiFieldSort() throws Exception {
+        createLuceneNgIndex();
+        createTestContent();
+
+        // Sort by status ASC, then age DESC
+        // page2(draft,35), page3(published,45), page1(published,25)
+        String query = "select [jcr:path] from [nt:base] where [status] is not null order by [status], [age] DESC";
+        assertQuery(query, "sql",
+                    List.of("/content/page2", "/content/page3", "/content/page1"));
+    }
+
+    @Test
+    public void testSortWithPropertyQuery() throws Exception {
+        createLuceneNgIndex();
+        createTestContent();
+
+        // Query with filter + sort: status='published' sorted by age DESC
+        // Should return page3(published,45), page1(published,25)
+        String query = "select [jcr:path] from [nt:base] where [status] = 'published' order by [age] DESC";
+        assertQuery(query, "sql",
+                    List.of("/content/page3", "/content/page1"));
+    }
 }
