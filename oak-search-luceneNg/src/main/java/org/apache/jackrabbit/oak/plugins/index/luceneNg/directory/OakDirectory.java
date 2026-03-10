@@ -80,17 +80,6 @@ public class OakDirectory extends Directory {
         this.fileNames.addAll(getListing());
     }
 
-    /**
-     * Gets the directory builder dynamically to avoid staleness issues.
-     */
-    private NodeBuilder getDirectoryBuilder() {
-        if (readOnly) {
-            return definitionBuilder.getChildNode(INDEX_DATA_CHILD_NAME);
-        } else {
-            return definitionBuilder.child(INDEX_DATA_CHILD_NAME);
-        }
-    }
-
     @Override
     public String[] listAll() throws IOException {
         return fileNames.toArray(new String[0]);
@@ -139,14 +128,47 @@ public class OakDirectory extends Directory {
     }
 
     @Override
-    public IndexOutput createTempOutput(String prefix, String suffix, IOContext context) throws IOException {
-        String name = getTempFileName(prefix, suffix, 0);
-        return createOutput(name, context);
+    public IndexInput openInput(String name, IOContext context) throws IOException {
+        NodeBuilder file = getDirectoryBuilder().getChildNode(name);
+        if (!file.exists()) {
+            throw new FileNotFoundException(String.format("[%s] %s", indexName, name));
+        }
+        return new OakIndexInput(name, file, indexName, blobFactory);
+    }
+
+    @Override
+    public Lock obtainLock(String name) throws IOException {
+        // Oak storage doesn't require locking - return a dummy lock
+        return new Lock() {
+            @Override
+            public void close() throws IOException {
+                // No-op
+            }
+
+            @Override
+            public void ensureValid() throws IOException {
+                // No-op
+            }
+        };
     }
 
     @Override
     public void sync(Collection<String> names) throws IOException {
         // No-op for Oak storage
+    }
+
+    @Override
+    public void close() throws IOException {
+        if (!readOnly) {
+            // Save directory listing
+            getDirectoryBuilder().setProperty(createProperty(PROP_DIR_LISTING, fileNames, Type.STRINGS));
+        }
+    }
+
+    @Override
+    public IndexOutput createTempOutput(String prefix, String suffix, IOContext context) throws IOException {
+        String name = getTempFileName(prefix, suffix, 0);
+        return createOutput(name, context);
     }
 
     @Override
@@ -177,41 +199,19 @@ public class OakDirectory extends Directory {
     }
 
     @Override
-    public IndexInput openInput(String name, IOContext context) throws IOException {
-        NodeBuilder file = getDirectoryBuilder().getChildNode(name);
-        if (!file.exists()) {
-            throw new FileNotFoundException(String.format("[%s] %s", indexName, name));
-        }
-        return new OakIndexInput(name, file, indexName, blobFactory);
-    }
-
-    @Override
-    public void close() throws IOException {
-        if (!readOnly) {
-            // Save directory listing
-            getDirectoryBuilder().setProperty(createProperty(PROP_DIR_LISTING, fileNames, Type.STRINGS));
-        }
-    }
-
-    @Override
     public Set<String> getPendingDeletions() throws IOException {
         return Set.of();
     }
 
-    @Override
-    public Lock obtainLock(String name) throws IOException {
-        // Oak storage doesn't require locking - return a dummy lock
-        return new Lock() {
-            @Override
-            public void close() throws IOException {
-                // No-op
-            }
-
-            @Override
-            public void ensureValid() throws IOException {
-                // No-op
-            }
-        };
+    /**
+     * Gets the directory builder dynamically to avoid staleness issues.
+     */
+    private NodeBuilder getDirectoryBuilder() {
+        if (readOnly) {
+            return definitionBuilder.getChildNode(INDEX_DATA_CHILD_NAME);
+        } else {
+            return definitionBuilder.child(INDEX_DATA_CHILD_NAME);
+        }
     }
 
     private Set<String> getListing() {

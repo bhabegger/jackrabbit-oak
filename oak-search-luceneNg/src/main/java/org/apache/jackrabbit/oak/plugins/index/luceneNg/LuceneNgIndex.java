@@ -63,6 +63,11 @@ public class LuceneNgIndex implements QueryIndex {
     }
 
     @Override
+    public String getIndexName() {
+        return "luceneNg";
+    }
+
+    @Override
     public double getCost(Filter filter, NodeState rootState) {
         // Check if we can handle this query
         FullTextExpression ft = filter.getFullTextConstraint();
@@ -83,6 +88,11 @@ public class LuceneNgIndex implements QueryIndex {
         }
 
         return Double.POSITIVE_INFINITY;
+    }
+
+    @Override
+    public String getPlan(Filter filter, NodeState rootState) {
+        return "lucene9:" + indexPath + " ft=" + filter.getFullTextConstraint();
     }
 
     @Override
@@ -242,16 +252,6 @@ public class LuceneNgIndex implements QueryIndex {
             LOG.error("Failed to tokenize text: " + text, e);
         }
         return tokens;
-    }
-
-    @Override
-    public String getPlan(Filter filter, NodeState rootState) {
-        return "lucene9:" + indexPath + " ft=" + filter.getFullTextConstraint();
-    }
-
-    @Override
-    public String getIndexName() {
-        return "luceneNg";
     }
 
     /**
