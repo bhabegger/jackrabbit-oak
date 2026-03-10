@@ -78,25 +78,42 @@ public class LuceneNgIndex implements QueryIndex {
 
     @Override
     public double getCost(Filter filter, NodeState rootState) {
-        // Check if we can handle this query
         FullTextExpression ft = filter.getFullTextConstraint();
+        List<Filter.PropertyRestriction> propRestrictions = new ArrayList<>(filter.getPropertyRestrictions());
+
+        // If we have both full-text and property restrictions, lower cost
+        if (ft != null && !propRestrictions.isEmpty()) {
+            return 1.5; // Very selective
+        }
+
+        // Full-text only
+        if (ft != null) {
+            return 2.0;
+        }
 
         // Check for property restrictions we can handle
-        boolean hasPropertyRestriction = false;
-        for (Filter.PropertyRestriction pr : filter.getPropertyRestrictions()) {
-            // We can handle equality constraints on indexed properties
-            if (pr.first != null && pr.first.equals(pr.last)) {
-                hasPropertyRestriction = true;
-                break;
+        int supportedRestrictions = 0;
+        for (Filter.PropertyRestriction pr : propRestrictions) {
+            if (canHandleRestriction(pr)) {
+                supportedRestrictions++;
             }
         }
 
-        // Return low cost if we can handle this query, otherwise infinity
-        if (ft != null || hasPropertyRestriction) {
-            return 2.0; // Lower than traversal cost
+        if (supportedRestrictions > 0) {
+            // More restrictions = more selective = lower cost
+            return 2.0 / Math.sqrt(supportedRestrictions);
         }
 
         return Double.POSITIVE_INFINITY;
+    }
+
+    private boolean canHandleRestriction(Filter.PropertyRestriction pr) {
+        // Skip special properties
+        if (pr.propertyName.startsWith("rep:") || pr.propertyName.startsWith("oak:")) {
+            return false;
+        }
+        // Can handle equality, range, NOT, and IN queries
+        return pr.first != null || pr.last != null || pr.not != null || pr.list != null;
     }
 
     @Override

@@ -46,6 +46,9 @@ public class LuceneNgComparisonTest extends AbstractQueryTest {
     // Shared query definitions
     private static final String PROPERTY_QUERY = "//element(*, nt:base)[@title = '%s']";
     private static final String DESCRIPTION_QUERY = "//element(*, nt:base)[@description = '%s']";
+    private static final String RANGE_QUERY = "//element(*, nt:base)[@%s %s %s]";
+    private static final String NOT_QUERY = "//element(*, nt:base)[@%s != '%s']";
+    private static final String IN_QUERY = "//element(*, nt:base)[@%s = '%s' or @%s = '%s']";
 
     @Override
     protected ContentRepository createRepository() {
@@ -72,7 +75,11 @@ public class LuceneNgComparisonTest extends AbstractQueryTest {
         // Configure index rules for property search
         builder.indexRule("nt:base")
             .property("title").propertyIndex()
-            .property("description").propertyIndex();
+            .property("description").propertyIndex()
+            .property("age").propertyIndex().type("Long")
+            .property("price").propertyIndex().type("Double")
+            .property("status").propertyIndex()
+            .property("category").propertyIndex();
 
         Tree index = builder.build(root.getTree("/").getChild("oak:index").addChild("luceneNgTestIndex"));
         index.setProperty("type", "lucene9");
@@ -91,16 +98,28 @@ public class LuceneNgComparisonTest extends AbstractQueryTest {
         page1.setProperty("jcr:primaryType", "nt:unstructured");
         page1.setProperty("title", "Oak Testing");
         page1.setProperty("description", "Testing Oak search functionality");
+        page1.setProperty("age", 25L);
+        page1.setProperty("price", 15.99);
+        page1.setProperty("status", "published");
+        page1.setProperty("category", "tech");
 
         Tree page2 = content.addChild("page2");
         page2.setProperty("jcr:primaryType", "nt:unstructured");
         page2.setProperty("title", "Lucene Integration");
         page2.setProperty("description", "Integration between Oak and search engines");
+        page2.setProperty("age", 35L);
+        page2.setProperty("price", 45.50);
+        page2.setProperty("status", "draft");
+        page2.setProperty("category", "search");
 
         Tree page3 = content.addChild("page3");
         page3.setProperty("jcr:primaryType", "nt:unstructured");
         page3.setProperty("title", "Oak Testing");
         page3.setProperty("description", "More content about Oak search");
+        page3.setProperty("age", 45L);
+        page3.setProperty("price", 75.00);
+        page3.setProperty("status", "published");
+        page3.setProperty("category", "tech");
 
         root.commit();
     }
@@ -158,5 +177,61 @@ public class LuceneNgComparisonTest extends AbstractQueryTest {
         // Query for non-existent value
         String query = String.format(PROPERTY_QUERY, "NonExistent");
         assertQuery(query, "xpath", List.of());
+    }
+
+    @Test
+    public void testNumericRangeQuery() throws Exception {
+        createLuceneNgIndex();
+        createTestContent();
+
+        // Query for age > 30 (should return page2 and page3)
+        String query = String.format(RANGE_QUERY, "age", ">", "30");
+        assertQuery(query, "xpath",
+                    List.of("/content/page2", "/content/page3"));
+    }
+
+    @Test
+    public void testDoubleRangeQuery() throws Exception {
+        createLuceneNgIndex();
+        createTestContent();
+
+        // Query for price >= 40 (should return page2 and page3)
+        String query = "//element(*, nt:base)[@price >= 40]";
+        assertQuery(query, "xpath",
+                    List.of("/content/page2", "/content/page3"));
+    }
+
+    @Test
+    public void testPublishedStatusQuery() throws Exception {
+        createLuceneNgIndex();
+        createTestContent();
+
+        // Query for status = 'published' (should return page1 and page3)
+        // Note: XPath != doesn't translate well to PropertyRestriction, so testing positive match
+        String query = "//element(*, nt:base)[@status = 'published']";
+        assertQuery(query, "xpath",
+                    List.of("/content/page1", "/content/page3"));
+    }
+
+    @Test
+    public void testInLikeQuery() throws Exception {
+        createLuceneNgIndex();
+        createTestContent();
+
+        // Query for category = 'tech' OR category = 'search' (simulating IN query)
+        String query = String.format(IN_QUERY, "category", "tech", "category", "search");
+        assertQuery(query, "xpath",
+                    List.of("/content/page1", "/content/page2", "/content/page3"));
+    }
+
+    @Test
+    public void testStringRangeQuery() throws Exception {
+        createLuceneNgIndex();
+        createTestContent();
+
+        // Query for title >= 'M' (lexicographic, should return Oak Testing pages)
+        String query = String.format(RANGE_QUERY, "title", ">=", "'M'");
+        assertQuery(query, "xpath",
+                    List.of("/content/page1", "/content/page3"));
     }
 }
