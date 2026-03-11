@@ -25,10 +25,14 @@ import org.apache.jackrabbit.oak.spi.query.Cursor;
 import org.apache.jackrabbit.oak.spi.query.Filter;
 import org.apache.jackrabbit.oak.spi.query.QueryIndex;
 import org.apache.jackrabbit.oak.spi.query.QueryIndex.OrderEntry;
+import org.apache.jackrabbit.oak.spi.query.QueryConstants;
+import org.apache.jackrabbit.oak.spi.query.fulltext.FullTextAnd;
+import org.apache.jackrabbit.oak.spi.query.fulltext.FullTextContains;
 import org.apache.jackrabbit.oak.spi.query.fulltext.FullTextExpression;
-import org.apache.jackrabbit.oak.spi.query.fulltext.FullTextParser;
+import org.apache.jackrabbit.oak.spi.query.fulltext.FullTextOr;
+import org.apache.jackrabbit.oak.spi.query.fulltext.FullTextTerm;
+import org.apache.jackrabbit.oak.spi.query.fulltext.FullTextVisitor;
 import org.apache.jackrabbit.oak.spi.query.QueryIndex.NodeAggregator;
-import org.apache.jackrabbit.oak.spi.query.fulltext.*;
 import org.apache.jackrabbit.oak.spi.state.NodeBuilder;
 import org.apache.jackrabbit.oak.spi.state.NodeState;
 import org.apache.jackrabbit.util.ISO8601;
@@ -39,10 +43,21 @@ import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
 import org.apache.lucene.document.DoublePoint;
 import org.apache.lucene.document.LongPoint;
 import org.apache.lucene.index.Term;
-import org.apache.lucene.search.*;
+import org.apache.lucene.facet.Facets;
+import org.apache.lucene.facet.FacetsCollector;
+import org.apache.lucene.facet.sortedset.DefaultSortedSetDocValuesReaderState;
+import org.apache.lucene.facet.sortedset.SortedSetDocValuesFacetCounts;
 import org.apache.lucene.search.BooleanClause.Occur;
+import org.apache.lucene.search.BooleanQuery;
+import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.MatchAllDocsQuery;
+import org.apache.lucene.search.PhraseQuery;
+import org.apache.lucene.search.Query;
 import org.apache.lucene.search.Sort;
 import org.apache.lucene.search.SortField;
+import org.apache.lucene.search.TermQuery;
+import org.apache.lucene.search.TermRangeQuery;
+import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.util.BytesRef;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -52,7 +67,9 @@ import java.io.IOException;
 import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
@@ -63,6 +80,8 @@ import java.util.stream.Collectors;
 public class LuceneNgIndex implements QueryIndex.AdvanceFulltextQueryIndex {
 
     private static final Logger LOG = LoggerFactory.getLogger(LuceneNgIndex.class);
+    // Must equal FacetHelper.ATTR_FACET_FIELDS — shared via plan attribute
+    private static final String ATTR_FACET_FIELDS = "oak.facet.fields";
 
     private final LuceneNgIndexTracker tracker;
     private final String indexPath;
@@ -114,12 +133,14 @@ public class LuceneNgIndex implements QueryIndex.AdvanceFulltextQueryIndex {
     }
 
     private boolean canHandleRestriction(Filter.PropertyRestriction pr) {
-        // Skip special properties
+        // Skip special properties (rep:facet, rep:excerpt, etc.) — they are not
+        // regular property restrictions and are handled separately as facet fields
         if (pr.propertyName.startsWith("rep:") || pr.propertyName.startsWith("oak:")) {
             return false;
         }
-        // Can handle equality, range, NOT, and IN queries
-        return pr.first != null || pr.last != null || pr.not != null || pr.list != null;
+        // Can handle equality, range, NOT NULL, NULL, NOT, and IN queries
+        return pr.first != null || pr.last != null || pr.not != null || pr.list != null
+            || pr.isNotNullRestriction() || pr.isNullRestriction();
     }
 
     @Override
@@ -167,6 +188,17 @@ public class LuceneNgIndex implements QueryIndex.AdvanceFulltextQueryIndex {
     private Query buildQuery(Filter filter) {
         FullTextExpression ft = filter.getFullTextConstraint();
 
+        // Strip rep:facet pseudo-restrictions — they are not real query constraints
+        List<Filter.PropertyRestriction> propRestrictions = filter.getPropertyRestrictions()
+            .stream()
+            .filter(pr -> !QueryConstants.REP_FACET.equals(pr.propertyName))
+            .collect(Collectors.toList());
+
+        // If there are no real constraints, match all documents
+        if (ft == null && propRestrictions.isEmpty()) {
+            return new MatchAllDocsQuery();
+        }
+
         // Handle full-text queries
         if (ft != null) {
             Analyzer analyzer = new StandardAnalyzer();
@@ -174,7 +206,6 @@ public class LuceneNgIndex implements QueryIndex.AdvanceFulltextQueryIndex {
             LOG.debug("Building full-text query: {}", ftQuery);
 
             // Combine with property restrictions if present
-            List<Filter.PropertyRestriction> propRestrictions = new ArrayList<>(filter.getPropertyRestrictions());
             if (!propRestrictions.isEmpty()) {
                 BooleanQuery.Builder bq = new BooleanQuery.Builder();
                 bq.add(ftQuery, Occur.MUST);
@@ -190,13 +221,9 @@ public class LuceneNgIndex implements QueryIndex.AdvanceFulltextQueryIndex {
         }
 
         // Handle property restriction queries only
-        List<Filter.PropertyRestriction> propRestrictions = new ArrayList<>(filter.getPropertyRestrictions());
-        if (propRestrictions.isEmpty()) {
-            throw new IllegalArgumentException("No supported constraint found");
-        }
-
         if (propRestrictions.size() == 1) {
-            return createPropertyQuery(propRestrictions.get(0));
+            Query q = createPropertyQuery(propRestrictions.get(0));
+            return q != null ? q : new MatchAllDocsQuery();
         }
 
         // Multiple property restrictions - combine with AND
@@ -212,15 +239,26 @@ public class LuceneNgIndex implements QueryIndex.AdvanceFulltextQueryIndex {
 
     /**
      * Creates a Lucene Query for a property restriction.
-     * Handles equality, range, NOT, and IN queries.
+     * Handles equality, range, NOT NULL, NULL, NOT, and IN queries.
      * Based on legacy LuceneIndex pattern.
      */
     private Query createPropertyQuery(Filter.PropertyRestriction pr) {
         String propertyName = pr.propertyName;
 
-        // Skip special properties
+        // Skip special properties (rep:facet etc.)
         if (propertyName.startsWith("rep:") || propertyName.startsWith("oak:")) {
             return null;
+        }
+
+        // Handle IS NOT NULL: matches all documents that have the property indexed
+        if (pr.isNotNullRestriction()) {
+            return new TermRangeQuery(propertyName, null, null, true, true);
+        }
+
+        // Handle IS NULL: currently not efficiently supportable; return MatchAllDocs
+        // (Oak will post-filter)
+        if (pr.isNullRestriction()) {
+            return new MatchAllDocsQuery();
         }
 
         // Determine property type from first/last/not value
@@ -524,8 +562,11 @@ public class LuceneNgIndex implements QueryIndex.AdvanceFulltextQueryIndex {
         FullTextExpression ft = filter.getFullTextConstraint();
         List<Filter.PropertyRestriction> propRestrictions = new ArrayList<>(filter.getPropertyRestrictions());
 
-        // We can handle full-text queries and/or property restrictions
-        if (ft == null && propRestrictions.isEmpty()) {
+        // Extract facet fields before the early-exit guard so facet-only queries are handled
+        List<String> facetFields = extractFacetFields(filter);
+
+        // We can handle full-text queries, property restrictions, and/or facet requests
+        if (ft == null && propRestrictions.isEmpty() && facetFields.isEmpty()) {
             return Collections.emptyList();
         }
 
@@ -543,6 +584,10 @@ public class LuceneNgIndex implements QueryIndex.AdvanceFulltextQueryIndex {
         builder.setFilter(filter);
         builder.setDelayed(false); // Synchronous index
         builder.setFulltextIndex(ft != null); // Full-text if ft constraint present
+        if (!facetFields.isEmpty()) {
+            builder.setAttribute(ATTR_FACET_FIELDS, facetFields);
+            LOG.debug("Facet fields requested: {}", facetFields);
+        }
 
         // Set sort order if we can support it
         if (sortOrder != null && !sortOrder.isEmpty()) {
@@ -587,6 +632,9 @@ public class LuceneNgIndex implements QueryIndex.AdvanceFulltextQueryIndex {
         Filter filter = plan.getFilter();
         List<OrderEntry> sortOrder = plan.getSortOrder();
 
+        @SuppressWarnings("unchecked")
+        List<String> facetFields = (List<String>) plan.getAttribute(ATTR_FACET_FIELDS);
+
         try {
             // Get index node
             LuceneNgIndexNode indexNode = tracker.acquireIndexNode(indexPath);
@@ -607,20 +655,44 @@ public class LuceneNgIndex implements QueryIndex.AdvanceFulltextQueryIndex {
             Query query = buildQuery(filter);
             LOG.debug("Executing query: {}", query);
 
-            // Execute query with or without sorting
+            // Execute query with facet collection if requested, otherwise plain search
             TopDocs docs;
-            if (sortOrder == null || sortOrder.isEmpty()) {
-                docs = searcher.search(query, 100);
+            Map<String, Facets> facetsMap = new HashMap<>();
+
+            if (facetFields != null && !facetFields.isEmpty()) {
+                FacetsCollector fc = new FacetsCollector();
+                if (sortOrder == null || sortOrder.isEmpty()) {
+                    docs = FacetsCollector.search(searcher, query, 100, fc);
+                } else {
+                    Sort sort = createSort(sortOrder, indexNode.getDefinition());
+                    LOG.debug("Sorting by: {}", sort);
+                    docs = FacetsCollector.search(searcher, query, 100, sort, fc);
+                }
+
+                for (String facetField : facetFields) {
+                    try {
+                        String luceneFieldName = FieldNames.createFacetFieldName(facetField);
+                        DefaultSortedSetDocValuesReaderState state =
+                            new DefaultSortedSetDocValuesReaderState(searcher.getIndexReader(), luceneFieldName);
+                        facetsMap.put(facetField, new SortedSetDocValuesFacetCounts(state, fc));
+                    } catch (IllegalArgumentException e) {
+                        LOG.debug("Facet field not indexed: {}", facetField);
+                    }
+                }
             } else {
-                Sort sort = createSort(sortOrder, indexNode.getDefinition());
-                LOG.debug("Sorting by: {}", sort);
-                docs = searcher.search(query, 100, sort);
+                if (sortOrder == null || sortOrder.isEmpty()) {
+                    docs = searcher.search(query, 100);
+                } else {
+                    Sort sort = createSort(sortOrder, indexNode.getDefinition());
+                    LOG.debug("Sorting by: {}", sort);
+                    docs = searcher.search(query, 100, sort);
+                }
             }
 
             LOG.debug("Found {} hits", docs.totalHits);
 
             // Return cursor
-            return new LuceneNgCursor(docs, searcher, holder);
+            return new LuceneNgCursor(docs, searcher, holder, facetsMap);
 
         } catch (IOException e) {
             LOG.error("Error executing query on index: " + indexPath, e);
@@ -715,5 +787,30 @@ public class LuceneNgIndex implements QueryIndex.AdvanceFulltextQueryIndex {
         }
 
         return builder;
+    }
+
+    /**
+     * Extracts facet property names from Filter.
+     * In Oak, facet requests are modelled as PropertyRestrictions where
+     * pr.propertyName equals "rep:facet" and pr.first holds the full
+     * expression "rep:facet(propName)" as a string value.
+     */
+    private List<String> extractFacetFields(Filter filter) {
+        List<String> facetFields = new ArrayList<>();
+        for (Filter.PropertyRestriction pr : filter.getPropertyRestrictions()) {
+            String propName = pr.propertyName;
+            if (QueryConstants.REP_FACET.equals(propName) && pr.first != null) {
+                String value = pr.first.getValue(org.apache.jackrabbit.oak.api.Type.STRING);
+                if (value != null && value.startsWith(QueryConstants.REP_FACET + "(")
+                        && value.endsWith(")")) {
+                    String facetField = value.substring(
+                        QueryConstants.REP_FACET.length() + 1, value.length() - 1).trim();
+                    if (!facetField.isEmpty()) {
+                        facetFields.add(facetField);
+                    }
+                }
+            }
+        }
+        return facetFields;
     }
 }

@@ -35,6 +35,7 @@ import org.apache.lucene.document.SortedDocValuesField;
 import org.apache.lucene.document.StoredField;
 import org.apache.lucene.document.StringField;
 import org.apache.lucene.document.TextField;
+import org.apache.lucene.facet.FacetsConfig;
 import org.apache.lucene.facet.sortedset.SortedSetDocValuesFacetField;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
@@ -59,6 +60,7 @@ public class LuceneNgIndexEditor implements Editor {
     private final NodeState root;
     private final IndexWriter indexWriter;
     private final boolean isRoot;
+    private LuceneNgIndexDefinition indexDefinition;
 
     /**
      * Creates a new LuceneNgIndexEditor (root editor with new IndexWriter).
@@ -281,16 +283,21 @@ public class LuceneNgIndexEditor implements Editor {
             // Add facet field if property is facet-enabled
             PropertyDefinition propDef = getPropertyDefinition(propName);
             if (propDef != null && propDef.facet) {
+                String facetFieldName = FieldNames.createFacetFieldName(propName);
+
                 if (!prop.isArray()) {
-                    String value = prop.getValue(org.apache.jackrabbit.oak.api.Type.STRING);
-                    String facetFieldName = FieldNames.createFacetFieldName(propName);
-                    doc.add(new SortedSetDocValuesFacetField(facetFieldName, value));
-                    LOG.trace("Indexed facet field: {} = {}", facetFieldName, value);
+                    String value = convertPropertyValueToString(prop);
+                    if (value != null) {
+                        doc.add(new SortedSetDocValuesFacetField(facetFieldName, value));
+                        LOG.trace("Indexed facet field: {} = {}", facetFieldName, value);
+                    }
                 } else {
                     // Multi-value facets
-                    for (String strValue : prop.getValue(org.apache.jackrabbit.oak.api.Type.STRINGS)) {
-                        String facetFieldName = FieldNames.createFacetFieldName(propName);
-                        doc.add(new SortedSetDocValuesFacetField(facetFieldName, strValue));
+                    Iterable<String> values = convertPropertyValuesToStrings(prop);
+                    for (String value : values) {
+                        if (value != null) {
+                            doc.add(new SortedSetDocValuesFacetField(facetFieldName, value));
+                        }
                     }
                 }
             }
@@ -298,7 +305,18 @@ public class LuceneNgIndexEditor implements Editor {
 
         // Only add document if it has indexed fields
         if (doc.getFields().size() > 1) { // More than just path field
-            indexWriter.addDocument(doc);
+            // FacetsConfig.build() is required to process SortedSetDocValuesFacetField entries
+            // into the SortedSetDocValues format that Lucene faceting expects.
+            // We configure each facet dimension to use its own field (dim name = index field name)
+            // so that DefaultSortedSetDocValuesReaderState can read each dimension separately.
+            FacetsConfig facetsConfig = new FacetsConfig();
+            for (org.apache.lucene.index.IndexableField field : doc.getFields()) {
+                if (field instanceof SortedSetDocValuesFacetField) {
+                    String dim = ((SortedSetDocValuesFacetField) field).dim;
+                    facetsConfig.setIndexFieldName(dim, dim);
+                }
+            }
+            indexWriter.addDocument(facetsConfig.build(doc));
             LOG.debug("Indexed node at path: {}", path);
         }
     }
@@ -337,19 +355,116 @@ public class LuceneNgIndexEditor implements Editor {
     /**
      * Gets property definition from index configuration.
      * Returns null if property is not indexed or definition not found.
+     * The index definition is cached after the first successful construction
+     * since it does not change during a single indexing session.
      */
     private PropertyDefinition getPropertyDefinition(String propertyName) {
+        if (indexDefinition == null) {
+            try {
+                indexDefinition = new LuceneNgIndexDefinition(root, definition.getNodeState(),
+                    "/oak:index/" + getIndexName(definition));
+            } catch (Exception e) {
+                LOG.debug("Could not create index definition", e);
+                return null;
+            }
+        }
         try {
-            LuceneNgIndexDefinition indexDef = new LuceneNgIndexDefinition(root, definition.getNodeState(), "/oak:index/" + getIndexName(definition));
-            for (org.apache.jackrabbit.oak.plugins.index.search.IndexDefinition.IndexingRule rule : indexDef.getDefinedRules()) {
+            for (org.apache.jackrabbit.oak.plugins.index.search.IndexDefinition.IndexingRule rule : indexDefinition.getDefinedRules()) {
                 PropertyDefinition propDef = rule.getConfig(propertyName);
-                if (propDef != null) {
-                    return propDef;
-                }
+                if (propDef != null) return propDef;
             }
         } catch (Exception e) {
             LOG.debug("Could not get property definition for: {}", propertyName, e);
         }
         return null;
+    }
+
+    /**
+     * Converts a single-value property to string based on its type.
+     * @param prop the property to convert
+     * @return string representation of the property value, or null if conversion fails
+     */
+    @Nullable
+    private String convertPropertyValueToString(PropertyState prop) {
+        if (prop.isArray()) {
+            return null;
+        }
+
+        try {
+            switch (prop.getType().tag()) {
+                case PropertyType.STRING:
+                    return prop.getValue(org.apache.jackrabbit.oak.api.Type.STRING);
+                case PropertyType.LONG:
+                    return String.valueOf(prop.getValue(org.apache.jackrabbit.oak.api.Type.LONG));
+                case PropertyType.DOUBLE:
+                    return String.valueOf(prop.getValue(org.apache.jackrabbit.oak.api.Type.DOUBLE));
+                case PropertyType.DATE:
+                    String dateStr = prop.getValue(org.apache.jackrabbit.oak.api.Type.DATE);
+                    long millis = ISO8601.parse(dateStr).getTimeInMillis();
+                    return String.valueOf(millis);
+                case PropertyType.BOOLEAN:
+                    return String.valueOf(prop.getValue(org.apache.jackrabbit.oak.api.Type.BOOLEAN));
+                default:
+                    LOG.warn("Unsupported property type for faceting: {}", prop.getType());
+                    return null;
+            }
+        } catch (Exception e) {
+            LOG.error("Failed to convert property value to string", e);
+            return null;
+        }
+    }
+
+    /**
+     * Converts a multi-value property to an iterable of strings based on its type.
+     * @param prop the property to convert
+     * @return iterable of string representations of the property values
+     */
+    @NotNull
+    private Iterable<String> convertPropertyValuesToStrings(PropertyState prop) {
+        if (!prop.isArray()) {
+            return java.util.Collections.emptyList();
+        }
+
+        try {
+            java.util.List<String> result = new java.util.ArrayList<>();
+            switch (prop.getType().tag()) {
+                case PropertyType.STRING:
+                    for (String val : prop.getValue(org.apache.jackrabbit.oak.api.Type.STRINGS)) {
+                        result.add(val);
+                    }
+                    break;
+                case PropertyType.LONG:
+                    for (Long val : prop.getValue(org.apache.jackrabbit.oak.api.Type.LONGS)) {
+                        result.add(String.valueOf(val));
+                    }
+                    break;
+                case PropertyType.DOUBLE:
+                    for (Double val : prop.getValue(org.apache.jackrabbit.oak.api.Type.DOUBLES)) {
+                        result.add(String.valueOf(val));
+                    }
+                    break;
+                case PropertyType.DATE:
+                    for (String dateStr : prop.getValue(org.apache.jackrabbit.oak.api.Type.DATES)) {
+                        try {
+                            long millis = ISO8601.parse(dateStr).getTimeInMillis();
+                            result.add(String.valueOf(millis));
+                        } catch (Exception e) {
+                            LOG.error("Failed to parse date: {}", dateStr, e);
+                        }
+                    }
+                    break;
+                case PropertyType.BOOLEAN:
+                    for (Boolean val : prop.getValue(org.apache.jackrabbit.oak.api.Type.BOOLEANS)) {
+                        result.add(String.valueOf(val));
+                    }
+                    break;
+                default:
+                    LOG.warn("Unsupported property type for faceting: {}", prop.getType());
+            }
+            return result;
+        } catch (Exception e) {
+            LOG.error("Failed to convert property values to strings", e);
+            return java.util.Collections.emptyList();
+        }
     }
 }
