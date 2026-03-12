@@ -16,6 +16,7 @@
  */
 package org.apache.jackrabbit.oak.plugins.index.luceneNg;
 
+import org.apache.jackrabbit.oak.plugins.index.IndexDefinitionHelper;
 import org.apache.jackrabbit.oak.spi.state.NodeState;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -86,17 +87,18 @@ public class LuceneNgIndexTracker {
             String indexPath = "/oak:index/" + indexName;
             NodeState indexState = oakIndex.getChildNode(indexName);
 
-            // Check if it's a lucene9 index
-            org.apache.jackrabbit.oak.api.PropertyState typeProp = indexState.getProperty("type");
-            if (typeProp != null) {
-                String type = typeProp.getValue(org.apache.jackrabbit.oak.api.Type.STRING);
-                if (LuceneNgIndexConstants.TYPE_LUCENE9.equals(type)) {
+            // Check if the activeTarget (or legacy type) routes queries to lucene9
+            try {
+                String activeTarget = IndexDefinitionHelper.getActiveTarget(indexState);
+                if (LuceneNgIndexConstants.TYPE_LUCENE9.equals(activeTarget)) {
                     // Create or update index node
                     indices.computeIfAbsent(indexPath, path -> {
                         LOG.debug("Tracking new Lucene 9 index: {}", path);
                         return new LuceneNgIndexNode(path, root, indexState);
                     });
                 }
+            } catch (IllegalArgumentException e) {
+                // Not a valid index definition (no type/activeTarget), skip silently
             }
         }
     }
