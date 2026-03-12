@@ -79,6 +79,15 @@ public class LuceneNgIndexTracker {
     }
 
     /**
+     * Closes all cached searchers and clears the index map.
+     * Called when the provider service is deactivated.
+     */
+    public synchronized void close() {
+        indices.values().forEach(LuceneNgIndexNode::close);
+        indices = Collections.emptyMap();
+    }
+
+    /**
      * Full scan of /oak:index. Builds a fresh map of all indexes whose
      * activeTarget (or legacy type) is lucene9, then atomically replaces
      * the current map. Entries removed from the definition or whose activeTarget

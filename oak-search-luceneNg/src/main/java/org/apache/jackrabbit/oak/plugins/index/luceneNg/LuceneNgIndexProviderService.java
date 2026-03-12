@@ -150,7 +150,10 @@ public class LuceneNgIndexProviderService {
             executor = null;
         }
 
-        indexTracker = null;
+        if (indexTracker != null) {
+            indexTracker.close();
+            indexTracker = null;
+        }
         LOG.info("LuceneNg Index Provider deactivated");
     }
 }
