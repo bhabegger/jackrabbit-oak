@@ -157,27 +157,21 @@ public class LuceneNgIndex implements QueryIndex.AdvanceFulltextQueryIndex {
                 return Cursors.newPathCursor(Collections.emptyList(), filter.getQueryLimits());
             }
 
-            // Get definition builder from rootState for reading index data
-            // Navigate to the index definition node (e.g., /oak:index/luceneNgTestIndex)
-            NodeBuilder definitionBuilder = getDefinitionBuilder(rootState, indexPath);
-
-            // Get searcher - pass definition builder so OakDirectory can access :data child node
-            IndexSearcherHolder holder = new IndexSearcherHolder(
-                definitionBuilder,
-                indexNode.getDefinition().getIndexName()
-            );
-            IndexSearcher searcher = holder.getSearcher();
+            IndexSearcher searcher = indexNode.getSearcher();
+            if (searcher == null) {
+                LOG.warn("No index data for {}", indexPath);
+                return Cursors.newPathCursor(Collections.emptyList(), filter.getQueryLimits());
+            }
 
             // Build Lucene query from filter
             Query query = buildQuery(filter);
             LOG.debug("Executing query: {}", query);
 
             // Execute query
-            TopDocs docs = searcher.search(query, 100); // Limit to 100 for now
+            TopDocs docs = searcher.search(query, 100);
             LOG.debug("Found {} hits", docs.totalHits);
 
-            // Return cursor
-            return new LuceneNgCursor(docs, searcher, holder);
+            return new LuceneNgCursor(docs, searcher);
 
         } catch (IOException e) {
             LOG.error("Error executing query on index: " + indexPath, e);
@@ -558,6 +552,12 @@ public class LuceneNgIndex implements QueryIndex.AdvanceFulltextQueryIndex {
 
     @Override
     public List<QueryIndex.IndexPlan> getPlans(Filter filter, List<OrderEntry> sortOrder, NodeState rootState) {
+        // Don't offer a plan when the index has not yet been populated (no data)
+        LuceneNgIndexNode indexNode = tracker.acquireIndexNode(indexPath);
+        if (indexNode == null || indexNode.getSearcher() == null) {
+            return Collections.emptyList();
+        }
+
         // Check if we can handle this query
         FullTextExpression ft = filter.getFullTextConstraint();
         List<Filter.PropertyRestriction> propRestrictions = new ArrayList<>(filter.getPropertyRestrictions());
@@ -643,13 +643,11 @@ public class LuceneNgIndex implements QueryIndex.AdvanceFulltextQueryIndex {
                 return Cursors.newPathCursor(Collections.emptyList(), filter.getQueryLimits());
             }
 
-            // Get searcher
-            NodeBuilder definitionBuilder = getDefinitionBuilder(rootState, indexPath);
-            IndexSearcherHolder holder = new IndexSearcherHolder(
-                definitionBuilder,
-                indexNode.getDefinition().getIndexName()
-            );
-            IndexSearcher searcher = holder.getSearcher();
+            IndexSearcher searcher = indexNode.getSearcher();
+            if (searcher == null) {
+                LOG.warn("No index data for {}", indexPath);
+                return Cursors.newPathCursor(Collections.emptyList(), filter.getQueryLimits());
+            }
 
             // Build Lucene query
             Query query = buildQuery(filter);
@@ -691,8 +689,7 @@ public class LuceneNgIndex implements QueryIndex.AdvanceFulltextQueryIndex {
 
             LOG.debug("Found {} hits", docs.totalHits);
 
-            // Return cursor
-            return new LuceneNgCursor(docs, searcher, holder, facetsMap);
+            return new LuceneNgCursor(docs, searcher, facetsMap);
 
         } catch (IOException e) {
             LOG.error("Error executing query on index: " + indexPath, e);

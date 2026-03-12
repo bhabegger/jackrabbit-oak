@@ -26,6 +26,7 @@ import org.slf4j.LoggerFactory;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Set;
 
 /**
@@ -90,6 +91,7 @@ public class LuceneNgIndexTracker {
 
         NodeState oakIndex = root.getChildNode("oak:index");
         if (!oakIndex.exists()) {
+            indices.values().forEach(LuceneNgIndexNode::close);
             indices = Collections.emptyMap();
             return;
         }
@@ -104,9 +106,19 @@ public class LuceneNgIndexTracker {
             try {
                 String activeTarget = IndexDefinitionHelper.getActiveTarget(indexState);
                 if (LuceneNgIndexConstants.TYPE_LUCENE9.equals(activeTarget)) {
-                    newIndices.put(indexPath, new LuceneNgIndexNode(indexPath, root, indexState));
-                    if (!oldIndices.containsKey(indexPath)) {
-                        LOG.debug("Now tracking Lucene 9 index: {}", indexPath);
+                    LuceneNgIndexNode oldNode = oldIndices.get(indexPath);
+                    if (oldNode != null && oldNode.getIndexState().equals(indexState)) {
+                        // Index definition unchanged — reuse the existing node and its cached searcher
+                        newIndices.put(indexPath, oldNode);
+                    } else {
+                        // New index or definition changed — open a fresh reader
+                        newIndices.put(indexPath, new LuceneNgIndexNode(indexPath, root, indexState));
+                        if (oldNode != null) {
+                            oldNode.close();
+                            LOG.debug("Refreshed cached searcher for changed index: {}", indexPath);
+                        } else {
+                            LOG.debug("Now tracking Lucene 9 index: {}", indexPath);
+                        }
                     }
                 }
             } catch (IllegalArgumentException e) {
@@ -114,10 +126,11 @@ public class LuceneNgIndexTracker {
             }
         }
 
-        // Log removals
-        for (String removed : oldIndices.keySet()) {
-            if (!newIndices.containsKey(removed)) {
-                LOG.debug("Stopped tracking Lucene 9 index (removed or activeTarget changed): {}", removed);
+        // Close searchers for evicted nodes
+        for (Entry<String, LuceneNgIndexNode> entry : oldIndices.entrySet()) {
+            if (!newIndices.containsKey(entry.getKey())) {
+                entry.getValue().close();
+                LOG.debug("Stopped tracking Lucene 9 index (removed or activeTarget changed): {}", entry.getKey());
             }
         }
 
