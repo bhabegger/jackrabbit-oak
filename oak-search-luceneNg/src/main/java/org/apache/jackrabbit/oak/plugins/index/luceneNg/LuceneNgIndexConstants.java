@@ -30,6 +30,18 @@ public interface LuceneNgIndexConstants extends FulltextIndexConstants {
     String TYPE_LUCENE9 = "lucene9";
 
     /**
+     * Sentinel type for multi-target indexes.
+     * An index definition with {@code type=lucene-multi} is handled exclusively
+     * by {@code MultiTargetIndexEditorProvider} / {@code MultiTargetIndexProviderService}.
+     * The actual write targets are declared in the {@code storeTargets} array property
+     * and the read target in {@code activeTarget}.
+     *
+     * <p>Using a dedicated type avoids duplicate writes: leaf providers
+     * (lucene47, lucene9) see an unknown type and return null.</p>
+     */
+    String TYPE_LUCENE_MULTI = "lucene-multi";
+
+    /**
      * Base path for Lucene index storage in repository.
      * Version-agnostic path shared across Lucene versions.
      */

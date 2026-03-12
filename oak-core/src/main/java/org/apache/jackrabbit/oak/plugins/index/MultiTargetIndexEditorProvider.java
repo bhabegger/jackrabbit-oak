@@ -50,16 +50,42 @@ public class MultiTargetIndexEditorProvider implements IndexEditorProvider {
 
     private static final Logger LOG = LoggerFactory.getLogger(MultiTargetIndexEditorProvider.class);
 
+    /**
+     * The index type value this provider handles exclusively.
+     * Any call with a different {@code type} returns null, preventing duplicate writes
+     * when leaf providers are also registered in the composite.
+     * Defaults to {@code null} (handle all types with multi-target storeTargets).
+     */
+    private final String handledType;
     private final List<IndexEditorProvider> providers;
     private final MultiTargetIndexMetrics metrics;
 
+    /**
+     * Creates a provider that handles ALL types (when storeTargets > 1).
+     * Use only when no single-target leaf providers are registered alongside this one.
+     */
     public MultiTargetIndexEditorProvider(@NotNull List<IndexEditorProvider> providers) {
-        this.providers = providers;
-        this.metrics = new MultiTargetIndexMetrics();
+        this(null, providers);
     }
 
     public MultiTargetIndexEditorProvider(@NotNull IndexEditorProvider... providers) {
-        this(Arrays.asList(providers));
+        this(null, Arrays.asList(providers));
+    }
+
+    /**
+     * Creates a provider that only activates for the given {@code handledType}.
+     * This prevents duplicate writes when leaf providers for individual types
+     * are also present in the whiteboard composite.
+     *
+     * @param handledType the {@code type} property value this provider handles
+     *                    (e.g. {@code "lucene-multi"}), or {@code null} to handle all types
+     * @param providers   leaf providers that handle individual target types
+     */
+    public MultiTargetIndexEditorProvider(@org.jetbrains.annotations.Nullable String handledType,
+                                          @NotNull List<IndexEditorProvider> providers) {
+        this.handledType = handledType;
+        this.providers = providers;
+        this.metrics = new MultiTargetIndexMetrics();
     }
 
     @Override
@@ -68,6 +94,11 @@ public class MultiTargetIndexEditorProvider implements IndexEditorProvider {
                                  @NotNull NodeBuilder definition,
                                  @NotNull NodeState root,
                                  @NotNull IndexUpdateCallback callback) throws CommitFailedException {
+        // If configured with a specific handled type, ignore all other types
+        if (handledType != null && !handledType.equals(type)) {
+            return null;
+        }
+
         NormalizedIndexProperties normalized;
         try {
             normalized = IndexDefinitionHelper.normalize(definition.getNodeState());
