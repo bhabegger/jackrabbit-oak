@@ -27,7 +27,7 @@
         <relativePath>../oak-parent/pom.xml</relativePath>
     </parent>
 
-    <artifactId>oak-search-luceneNg</artifactId>
+    <artifactId>oak-search-lucene-ng</artifactId>
     <name>Oak Lucene 9</name>
     <packaging>bundle</packaging>
     <description>Oak Lucene 9 integration subproject</description>

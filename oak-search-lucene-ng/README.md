@@ -1,4 +1,4 @@
-# oak-search-luceneNg
+# oak-search-lucene-ng
 
 Lucene 9 index provider for Oak (`type="lucene9"`).
 
