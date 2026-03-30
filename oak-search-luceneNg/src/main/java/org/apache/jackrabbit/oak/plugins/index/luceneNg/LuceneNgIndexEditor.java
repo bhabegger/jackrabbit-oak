@@ -302,6 +302,18 @@ public class LuceneNgIndexEditor implements Editor {
 
         boolean hasIndexedProperty = false;
 
+        // NODE_NAME field: local name (namespace prefix stripped) for localname() queries.
+        // Only written when the indexing rule declares indexNodeName=true.
+        if (rule.isNodeNameIndexed()) {
+            String localName = PathUtils.getName(path);
+            int colon = localName.indexOf(':');
+            String value = colon < 0 ? localName : localName.substring(colon + 1);
+            if (!value.isEmpty()) {
+                doc.add(new StringField(FieldNames.NODE_NAME, value, Field.Store.NO));
+                hasIndexedProperty = true;
+            }
+        }
+
         for (PropertyState prop : node.getProperties()) {
             String propName = prop.getName();
 

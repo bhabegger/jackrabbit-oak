@@ -21,6 +21,8 @@ import org.apache.jackrabbit.oak.api.Type;
 import org.apache.jackrabbit.oak.commons.PathUtils;
 import org.apache.jackrabbit.oak.plugins.index.cursor.Cursors;
 import org.apache.jackrabbit.oak.plugins.index.search.FieldNames;
+import org.apache.jackrabbit.oak.plugins.index.search.IndexDefinition;
+import org.apache.jackrabbit.oak.plugins.index.search.IndexDefinition.IndexingRule;
 import org.apache.jackrabbit.oak.plugins.index.search.IndexDefinition.SecureFacetConfiguration;
 import org.apache.jackrabbit.oak.plugins.memory.PropertyValues;
 import org.apache.jackrabbit.oak.spi.query.Cursor;
@@ -124,6 +126,7 @@ public class LuceneNgIndex implements QueryIndex.AdvanceFulltextQueryIndex {
                 .filter(pr -> pr.propertyName != null)
                 .filter(pr -> !pr.propertyName.startsWith("rep:"))
                 .filter(pr -> !pr.propertyName.startsWith("oak:"))
+                .filter(pr -> !pr.propertyName.startsWith(QueryConstants.FUNCTION_RESTRICTION_PREFIX))
                 .collect(Collectors.toList());
 
         // If we have both full-text and property restrictions, lower cost
@@ -214,10 +217,15 @@ public class LuceneNgIndex implements QueryIndex.AdvanceFulltextQueryIndex {
     private Query buildQuery(Filter filter) {
         FullTextExpression ft = filter.getFullTextConstraint();
 
-        // Strip rep:facet pseudo-restrictions — they are not real query constraints
+        // Strip rep:facet pseudo-restrictions and function restrictions we don't index.
+        // Function restrictions (e.g. "function*@:localname") are paired with their dedicated
+        // equivalents (e.g. ":localname") and are handled by createPropertyQuery(); including
+        // them as separate clauses would produce a term query on a non-existent field.
         List<Filter.PropertyRestriction> propRestrictions = filter.getPropertyRestrictions()
             .stream()
             .filter(pr -> !QueryConstants.REP_FACET.equals(pr.propertyName))
+            .filter(pr -> pr.propertyName == null
+                    || !pr.propertyName.startsWith(QueryConstants.FUNCTION_RESTRICTION_PREFIX))
             .collect(Collectors.toList());
 
         Query pathQuery = buildPathQuery(filter);
@@ -308,6 +316,18 @@ public class LuceneNgIndex implements QueryIndex.AdvanceFulltextQueryIndex {
      */
     private Query createPropertyQuery(Filter.PropertyRestriction pr) {
         String propertyName = pr.propertyName;
+
+        // localname() restriction — maps to the NODE_NAME StringField
+        if (QueryConstants.RESTRICTION_LOCAL_NAME.equals(propertyName)) {
+            return createLocalNameQuery(pr);
+        }
+
+        // Function restrictions (e.g. "function*@:localname", "function*lower*@name") are
+        // only supported when the index has an explicit function property definition.
+        // We don't support that yet, so skip these to avoid false negatives.
+        if (propertyName.startsWith(QueryConstants.FUNCTION_RESTRICTION_PREFIX)) {
+            return null;
+        }
 
         // Skip special properties (rep:facet etc.)
         if (propertyName.startsWith("rep:") || propertyName.startsWith("oak:")) {
@@ -515,6 +535,25 @@ public class LuceneNgIndex implements QueryIndex.AdvanceFulltextQueryIndex {
     }
 
     /**
+     * Handles localname() restrictions. Equality maps to a TermQuery; LIKE maps to
+     * a WildcardQuery — both on the NODE_NAME StringField (namespace-stripped local name).
+     * Mirrors LucenePropertyIndex.createNodeNameQuery().
+     */
+    private static Query createLocalNameQuery(Filter.PropertyRestriction pr) {
+        if (pr.first != null && pr.first.equals(pr.last) && pr.firstIncluding && pr.lastIncluding) {
+            return new TermQuery(new Term(FieldNames.NODE_NAME,
+                    pr.first.getValue(Type.STRING)));
+        }
+        if (pr.isLike && pr.first != null) {
+            String like = pr.first.getValue(Type.STRING);
+            // Convert SQL LIKE wildcards (% → *, _ → ?) to Lucene wildcard syntax
+            String luceneWild = like.replace("%", "*").replace("_", "?");
+            return new WildcardQuery(new Term(FieldNames.NODE_NAME, luceneWild));
+        }
+        return null;
+    }
+
+    /**
      * Converts a FullTextExpression to a Lucene Query using visitor pattern.
      * Based on legacy LuceneIndex implementation.
      */
@@ -638,13 +677,35 @@ public class LuceneNgIndex implements QueryIndex.AdvanceFulltextQueryIndex {
         FullTextExpression ft = filter.getFullTextConstraint();
         List<Filter.PropertyRestriction> propRestrictions = new ArrayList<>(filter.getPropertyRestrictions());
 
+        // Remove function restrictions (e.g. "function*@:localname") — we don't support
+        // function-based indexes yet; these restrictions are never satisfied by our index
+        // and must not be counted as "supported" constraints or included in the Lucene query.
+        propRestrictions.removeIf(pr -> pr.propertyName != null
+                && pr.propertyName.startsWith(QueryConstants.FUNCTION_RESTRICTION_PREFIX));
+
+        // localname() restriction: only offer a plan when the indexing rule declares
+        // indexNodeName=true (mirrors FulltextIndexPlanner.canEvalNodeNameRestriction).
+        Filter.PropertyRestriction localNamePr = filter.getPropertyRestriction(QueryConstants.RESTRICTION_LOCAL_NAME);
+        if (localNamePr != null) {
+            String nodeType = filter.getNodeType();
+            IndexingRule rule = nodeType != null
+                    ? indexNode.getDefinition().getApplicableIndexingRule(nodeType) : null;
+            if (rule == null || !rule.isNodeNameIndexed()) {
+                return Collections.emptyList();
+            }
+            // Remove from the generic list — it is handled as a special case
+            propRestrictions.removeIf(pr -> QueryConstants.RESTRICTION_LOCAL_NAME.equals(pr.propertyName));
+        }
+
         // Extract facet fields before the early-exit guard so facet-only queries are handled
         List<String> facetFields = extractFacetFields(filter);
 
         // Offer a plan when there is at least one constraint we can evaluate:
-        // fulltext, property restriction, facet, or a declared node-type restriction
-        // that the index actually covers.
-        boolean noContentConstraints = ft == null && propRestrictions.isEmpty() && facetFields.isEmpty();
+        // fulltext, property restriction, facet, localname(), or a declared node-type
+        // restriction that the index actually covers.
+        boolean hasLocalNameConstraint = localNamePr != null;
+        boolean noContentConstraints = ft == null && propRestrictions.isEmpty()
+                && facetFields.isEmpty() && !hasLocalNameConstraint;
         if (noContentConstraints) {
             if (filter.matchesAllTypes()) {
                 // No constraints at all — skip
@@ -869,7 +930,7 @@ public class LuceneNgIndex implements QueryIndex.AdvanceFulltextQueryIndex {
      */
     private int getPropertyTypeFromDefinition(LuceneNgIndexDefinition definition, String propertyName, int fallbackType) {
         // Try to find property definition in index rules
-        for (org.apache.jackrabbit.oak.plugins.index.search.IndexDefinition.IndexingRule rule : definition.getDefinedRules()) {
+        for (IndexingRule rule : definition.getDefinedRules()) {
             org.apache.jackrabbit.oak.plugins.index.search.PropertyDefinition propDef = rule.getConfig(propertyName);
             if (propDef != null && propDef.index) {
                 return propDef.getType();
