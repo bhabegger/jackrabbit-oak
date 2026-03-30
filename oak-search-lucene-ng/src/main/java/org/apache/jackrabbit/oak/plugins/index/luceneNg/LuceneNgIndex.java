@@ -80,11 +80,13 @@ import javax.jcr.PropertyType;
 import java.io.IOException;
 import java.io.StringReader;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
@@ -230,20 +232,21 @@ public class LuceneNgIndex implements QueryIndex.AdvanceFulltextQueryIndex {
         if (term == null) {
             return Cursors.newPathCursor(Collections.emptyList(), filter.getQueryLimits());
         }
-        List<String> suggestions = new ArrayList<>();
+        // Use LinkedHashSet for order-preserving deduplication
+        Set<String> seen = new LinkedHashSet<>();
         try (AnalyzingInfixSuggester suggester = indexNode.getLookup()) {
             if (suggester != null && suggester.getCount() > 0) {
                 for (Lookup.LookupResult r : suggester.lookup(term, 10, true, false)) {
-                    suggestions.add(r.key.toString());
+                    seen.add(r.key.toString());
                 }
             }
         } catch (Exception e) {
             LOG.warn("Suggest query '{}' failed: {}", term, e.getMessage());
         }
-        return new SuggestionCursor(suggestions, QueryConstants.REP_SUGGEST);
+        return new SuggestionCursor(new ArrayList<>(seen), QueryConstants.REP_SUGGEST);
     }
 
-    private Cursor executeSpellcheck(String queryString, IndexReader reader, Filter filter) {
+    private Cursor executeSpellcheck(String queryString, IndexSearcher searcher, Filter filter) {
         String term = extractTermParam(queryString);
         if (term == null) {
             return Cursors.newPathCursor(Collections.emptyList(), filter.getQueryLimits());
@@ -252,14 +255,35 @@ public class LuceneNgIndex implements QueryIndex.AdvanceFulltextQueryIndex {
         try {
             DirectSpellChecker spellChecker = new DirectSpellChecker();
             SuggestWord[] words = spellChecker.suggestSimilar(
-                    new Term(FieldNames.SPELLCHECK, term), 10, reader);
+                    new Term(FieldNames.SPELLCHECK, term), 10, searcher.getIndexReader());
+            Query pathQuery = buildPathQuery(filter);
             for (SuggestWord w : words) {
-                suggestions.add(w.string);
+                if (hasMatchingDoc(searcher, w.string, pathQuery)) {
+                    suggestions.add(w.string);
+                }
             }
         } catch (Exception e) {
             LOG.warn("Spellcheck query '{}' failed: {}", term, e.getMessage());
         }
         return new SuggestionCursor(suggestions, QueryConstants.REP_SPELLCHECK);
+    }
+
+    /**
+     * Returns true if the index contains at least one document where the SPELLCHECK field
+     * contains {@code word}, optionally restricted to the path constraint in {@code pathQuery}.
+     */
+    private boolean hasMatchingDoc(IndexSearcher searcher, String word, Query pathQuery) throws IOException {
+        Query wordQuery = new TermQuery(new Term(FieldNames.SPELLCHECK, word));
+        Query verifyQuery;
+        if (pathQuery != null) {
+            BooleanQuery.Builder bq = new BooleanQuery.Builder();
+            bq.add(wordQuery, Occur.MUST);
+            bq.add(pathQuery, Occur.FILTER);
+            verifyQuery = bq.build();
+        } else {
+            verifyQuery = wordQuery;
+        }
+        return searcher.search(verifyQuery, 1).totalHits.value > 0;
     }
 
     /** Extracts the {@code term=} parameter from a suggest/spellcheck query string. */
@@ -798,6 +822,25 @@ public class LuceneNgIndex implements QueryIndex.AdvanceFulltextQueryIndex {
         // Extract facet fields before the early-exit guard so facet-only queries are handled
         List<String> facetFields = extractFacetFields(filter);
 
+        // For native suggest/spellcheck queries, check that the indexing rule's base node type
+        // matches the query's node type exactly (mirrors FulltextIndexPlanner behaviour).
+        LuceneNgIndexDefinition definition = indexNode.getDefinition();
+        String functionName = definition.getFunctionName();
+        if (functionName != null) {
+            Filter.PropertyRestriction nativeRestriction = filter.getPropertyRestriction(functionName);
+            if (nativeRestriction != null && nativeRestriction.first != null) {
+                String nativeQuery = nativeRestriction.first.getValue(Type.STRING);
+                if (nativeQuery.startsWith("suggest?") || nativeQuery.startsWith("spellcheck?")) {
+                    String queryNodeType = filter.getNodeType();
+                    IndexDefinition.IndexingRule rule = queryNodeType != null
+                            ? definition.getApplicableIndexingRule(queryNodeType) : null;
+                    if (rule == null || !rule.getBaseNodeType().equals(queryNodeType)) {
+                        return Collections.emptyList();
+                    }
+                }
+            }
+        }
+
         // Offer a plan when there is at least one constraint we can evaluate:
         // fulltext, property restriction, facet, localname(), or a declared node-type
         // restriction that the index actually covers.
@@ -919,7 +962,7 @@ public class LuceneNgIndex implements QueryIndex.AdvanceFulltextQueryIndex {
                 if (nativeQuery.startsWith("suggest?")) {
                     return executeSuggest(nativeQuery.substring("suggest?".length()), indexNode, filter);
                 } else if (nativeQuery.startsWith("spellcheck?")) {
-                    return executeSpellcheck(nativeQuery.substring("spellcheck?".length()), searcher.getIndexReader(), filter);
+                    return executeSpellcheck(nativeQuery.substring("spellcheck?".length()), searcher, filter);
                 }
             }
 

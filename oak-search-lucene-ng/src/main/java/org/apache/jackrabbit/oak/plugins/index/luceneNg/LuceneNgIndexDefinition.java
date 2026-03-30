@@ -42,7 +42,9 @@ public class LuceneNgIndexDefinition extends IndexDefinition {
 
     @Override
     protected String getDefaultFunctionName() {
-        return LuceneNgIndexConstants.TYPE_LUCENE9;
+        // Must match SpellcheckImpl/SuggestImpl.NATIVE_LUCENE_LANGUAGE = "lucene"
+        // so that SPELLCHECK() and SUGGEST() SQL2 queries are routed to this index.
+        return "lucene";
     }
 
     /**

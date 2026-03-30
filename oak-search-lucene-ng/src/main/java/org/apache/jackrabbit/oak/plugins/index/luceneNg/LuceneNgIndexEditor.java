@@ -367,6 +367,23 @@ public class LuceneNgIndexEditor implements Editor {
             }
         }
 
+        // Third pass: virtual :nodeName property — index node's local name for suggest/spellcheck
+        PropertyDefinition nodeNamePd = rule.getConfig(
+                org.apache.jackrabbit.oak.plugins.index.search.FulltextIndexConstants.PROPDEF_PROP_NODE_NAME);
+        if (nodeNamePd != null) {
+            String localName = PathUtils.getName(path);
+            if (localName != null && !localName.isEmpty()) {
+                if (nodeNamePd.useInSuggest) {
+                    doc.add(new TextField(FieldNames.SUGGEST, localName, Field.Store.YES));
+                    hasIndexedProperty = true;
+                }
+                if (nodeNamePd.useInSpellcheck) {
+                    doc.add(new TextField(FieldNames.SPELLCHECK, localName, Field.Store.NO));
+                    hasIndexedProperty = true;
+                }
+            }
+        }
+
         if (!hasIndexedProperty) {
             return;
         }
