@@ -72,6 +72,7 @@ public class LuceneNgIndexEditor implements Editor {
     private final String path;
     private final String indexPath;
     private final NodeBuilder definition;
+    private final NodeBuilder storageBuilder;
     private final NodeState root;
     private final IndexWriter indexWriter;
     private final boolean isRoot;
@@ -99,6 +100,7 @@ public class LuceneNgIndexEditor implements Editor {
         this.path = path;
         this.indexPath = indexPath;
         this.definition = definition;
+        this.storageBuilder = storageBuilder;
         this.root = root;
         this.isRoot = true;
         this.callback = callback;
@@ -151,6 +153,7 @@ public class LuceneNgIndexEditor implements Editor {
         this.path = path;
         this.indexPath = indexPath;
         this.definition = definition;
+        this.storageBuilder = null;
         this.root = root;
         this.indexWriter = sharedWriter;
         this.isRoot = false;
@@ -177,6 +180,11 @@ public class LuceneNgIndexEditor implements Editor {
         if (isRoot) {
             try {
                 indexWriter.commit();
+                // Build suggest index from freshly committed data (best-effort, non-fatal)
+                if (storageBuilder != null) {
+                    LuceneNgSuggestHelper.updateSuggester(definition, storageBuilder,
+                            PathUtils.getName(indexPath));
+                }
                 indexWriter.close();
                 LOG.debug("Committed Lucene 9 index");
             } catch (IOException e) {
@@ -466,6 +474,14 @@ public class LuceneNgIndexEditor implements Editor {
             added = indexFacetField(doc, prop, propName) || added;
         }
 
+        // Suggest and spellcheck fields use the string representation regardless of declared type
+        if (pd.useInSuggest) {
+            indexSuggestField(doc, prop);
+        }
+        if (pd.useInSpellcheck) {
+            indexSpellcheckField(doc, prop);
+        }
+
         return added;
     }
 
@@ -636,6 +652,32 @@ public class LuceneNgIndexEditor implements Editor {
             }
         }
         return added;
+    }
+
+    private void indexSuggestField(Document doc, PropertyState prop) {
+        if (!prop.isArray()) {
+            String value = convertToString(prop);
+            if (value != null) {
+                doc.add(new TextField(FieldNames.SUGGEST, value, Field.Store.YES));
+            }
+        } else {
+            for (String value : convertAllToStrings(prop)) {
+                doc.add(new TextField(FieldNames.SUGGEST, value, Field.Store.YES));
+            }
+        }
+    }
+
+    private void indexSpellcheckField(Document doc, PropertyState prop) {
+        if (!prop.isArray()) {
+            String value = convertToString(prop);
+            if (value != null) {
+                doc.add(new TextField(FieldNames.SPELLCHECK, value, Field.Store.NO));
+            }
+        } else {
+            for (String value : convertAllToStrings(prop)) {
+                doc.add(new TextField(FieldNames.SPELLCHECK, value, Field.Store.NO));
+            }
+        }
     }
 
     // -------------------------------------------------------------------------

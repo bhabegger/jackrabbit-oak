@@ -11,8 +11,8 @@ Lucene 9 index provider for Oak (`type="lucene9"`).
 | Facets (insecure / statistical / secure) | ✓ | ✓ | ✓ |
 | Excerpts | ✓ | ✓ | ✓ |
 | Ordering / sorting | ✓ | ✓ | ✓ |
-| Suggestions | ✓ | ✓ | ✗ |
-| Spellcheck | ✓ | ✓ | ✗ |
+| Suggestions | ✓ | ✓ | ✓ |
+| Spellcheck | ✓ | ✓ | ✓ |
 | Similarity / More Like This | ✓ | ✓ (+ KNN) | ✗ |
 | Native queries | ✓ | ✓ | ✗ |
 | Index statistics / JMX | ✓ | ✓ | ✗ |

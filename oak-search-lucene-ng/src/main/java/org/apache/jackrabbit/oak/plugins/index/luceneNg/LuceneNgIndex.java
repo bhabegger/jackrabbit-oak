@@ -19,6 +19,7 @@ package org.apache.jackrabbit.oak.plugins.index.luceneNg;
 import org.apache.jackrabbit.oak.api.PropertyValue;
 import org.apache.jackrabbit.oak.api.Type;
 import org.apache.jackrabbit.oak.commons.PathUtils;
+import org.apache.jackrabbit.oak.plugins.index.cursor.AbstractCursor;
 import org.apache.jackrabbit.oak.plugins.index.cursor.Cursors;
 import org.apache.jackrabbit.oak.plugins.index.search.FieldNames;
 import org.apache.jackrabbit.oak.plugins.index.search.IndexDefinition;
@@ -27,6 +28,7 @@ import org.apache.jackrabbit.oak.plugins.index.search.IndexDefinition.SecureFace
 import org.apache.jackrabbit.oak.plugins.memory.PropertyValues;
 import org.apache.jackrabbit.oak.spi.query.Cursor;
 import org.apache.jackrabbit.oak.spi.query.Filter;
+import org.apache.jackrabbit.oak.spi.query.IndexRow;
 import org.apache.jackrabbit.oak.spi.query.QueryIndex;
 import org.apache.jackrabbit.oak.spi.query.QueryIndex.OrderEntry;
 import org.apache.jackrabbit.oak.spi.query.QueryConstants;
@@ -47,7 +49,12 @@ import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
 import org.apache.lucene.search.uhighlight.UnifiedHighlighter;
 import org.apache.lucene.document.DoublePoint;
 import org.apache.lucene.document.LongPoint;
+import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.Term;
+import org.apache.lucene.search.spell.DirectSpellChecker;
+import org.apache.lucene.search.spell.SuggestWord;
+import org.apache.lucene.search.suggest.Lookup;
+import org.apache.lucene.search.suggest.analyzing.AnalyzingInfixSuggester;
 import org.apache.lucene.facet.Facets;
 import org.apache.lucene.facet.FacetsCollector;
 import org.apache.lucene.facet.sortedset.DefaultSortedSetDocValuesReaderState;
@@ -211,6 +218,97 @@ public class LuceneNgIndex implements QueryIndex.AdvanceFulltextQueryIndex {
         } catch (IOException e) {
             LOG.error("Error executing query on index: " + indexPath, e);
             return Cursors.newPathCursor(Collections.emptyList(), filter.getQueryLimits());
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Suggest and spellcheck
+    // -------------------------------------------------------------------------
+
+    private Cursor executeSuggest(String queryString, LuceneNgIndexNode indexNode, Filter filter) {
+        String term = extractTermParam(queryString);
+        if (term == null) {
+            return Cursors.newPathCursor(Collections.emptyList(), filter.getQueryLimits());
+        }
+        List<String> suggestions = new ArrayList<>();
+        try (AnalyzingInfixSuggester suggester = indexNode.getLookup()) {
+            if (suggester != null && suggester.getCount() > 0) {
+                for (Lookup.LookupResult r : suggester.lookup(term, 10, true, false)) {
+                    suggestions.add(r.key.toString());
+                }
+            }
+        } catch (Exception e) {
+            LOG.warn("Suggest query '{}' failed: {}", term, e.getMessage());
+        }
+        return new SuggestionCursor(suggestions, QueryConstants.REP_SUGGEST);
+    }
+
+    private Cursor executeSpellcheck(String queryString, IndexReader reader, Filter filter) {
+        String term = extractTermParam(queryString);
+        if (term == null) {
+            return Cursors.newPathCursor(Collections.emptyList(), filter.getQueryLimits());
+        }
+        List<String> suggestions = new ArrayList<>();
+        try {
+            DirectSpellChecker spellChecker = new DirectSpellChecker();
+            SuggestWord[] words = spellChecker.suggestSimilar(
+                    new Term(FieldNames.SPELLCHECK, term), 10, reader);
+            for (SuggestWord w : words) {
+                suggestions.add(w.string);
+            }
+        } catch (Exception e) {
+            LOG.warn("Spellcheck query '{}' failed: {}", term, e.getMessage());
+        }
+        return new SuggestionCursor(suggestions, QueryConstants.REP_SPELLCHECK);
+    }
+
+    /** Extracts the {@code term=} parameter from a suggest/spellcheck query string. */
+    private static String extractTermParam(String queryString) {
+        for (String param : queryString.split("&")) {
+            String[] kv = param.split("=", 2);
+            if (kv.length == 2 && "term".equals(kv[0])) {
+                return kv[1];
+            }
+        }
+        return null;
+    }
+
+    /**
+     * A virtual cursor that returns suggestion strings as index rows.
+     * Each row has path "/" and returns the suggestion text for the given column.
+     */
+    private static class SuggestionCursor extends AbstractCursor {
+        private final List<String> suggestions;
+        private final String columnName;
+        private int index = 0;
+        private String current;
+
+        SuggestionCursor(List<String> suggestions, String columnName) {
+            this.suggestions = suggestions;
+            this.columnName = columnName;
+        }
+
+        @Override
+        public boolean hasNext() {
+            return index < suggestions.size();
+        }
+
+        @Override
+        public IndexRow next() {
+            current = suggestions.get(index++);
+            final String suggestion = current;
+            return new IndexRow() {
+                @Override public boolean isVirtualRow() { return true; }
+                @Override public String getPath() { return "/"; }
+                @Override public PropertyValue getValue(String column) {
+                    if (columnName.equals(column) ||
+                            QueryConstants.REP_SUGGEST.equals(column) ||
+                            QueryConstants.REP_SPELLCHECK.equals(column)) {
+                        return PropertyValues.newString(suggestion);
+                    }
+                    return null;
+                }
+            };
         }
     }
 
@@ -812,6 +910,18 @@ public class LuceneNgIndex implements QueryIndex.AdvanceFulltextQueryIndex {
             LuceneNgIndexDefinition definition = indexNode.getDefinition();
             SecureFacetConfiguration secureFacetConfiguration = definition.getSecureFacetConfiguration();
             int numberOfTopFacets = definition.getNumberOfTopFacets();
+
+            // Detect and handle suggest / spellcheck native queries
+            String functionName = definition.getFunctionName();
+            Filter.PropertyRestriction nativeRestriction = filter.getPropertyRestriction(functionName);
+            if (nativeRestriction != null && nativeRestriction.first != null) {
+                String nativeQuery = String.valueOf(nativeRestriction.first.getValue(nativeRestriction.first.getType()));
+                if (nativeQuery.startsWith("suggest?")) {
+                    return executeSuggest(nativeQuery.substring("suggest?".length()), indexNode, filter);
+                } else if (nativeQuery.startsWith("spellcheck?")) {
+                    return executeSpellcheck(nativeQuery.substring("spellcheck?".length()), searcher.getIndexReader(), filter);
+                }
+            }
 
             // Build Lucene query
             Query query = buildQuery(filter);

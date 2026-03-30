@@ -19,6 +19,7 @@ package org.apache.jackrabbit.oak.plugins.index.luceneNg;
 import org.apache.jackrabbit.oak.commons.PathUtils;
 import org.apache.jackrabbit.oak.spi.state.NodeState;
 import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.suggest.analyzing.AnalyzingInfixSuggester;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
@@ -39,6 +40,7 @@ public class LuceneNgIndexNode {
     private static final Logger LOG = LoggerFactory.getLogger(LuceneNgIndexNode.class);
 
     private final String indexPath;
+    private final String indexName;
     /** Immutable snapshot of the index definition — used for definition change detection. */
     private final NodeState indexState;
     /**
@@ -65,10 +67,11 @@ public class LuceneNgIndexNode {
                              @NotNull NodeState root,
                              @NotNull NodeState indexState) {
         this.indexPath = indexPath;
+        this.indexName = PathUtils.getName(indexPath);
         this.indexState = indexState;
         this.definition = new LuceneNgIndexDefinition(root, indexState, indexPath);
 
-        String indexName = PathUtils.getName(indexPath);
+        String indexName = this.indexName;
         this.storageState = LuceneNgIndexStorage.storageState(indexState);
 
         IndexSearcherHolder holder = null;
@@ -111,6 +114,17 @@ public class LuceneNgIndexNode {
     @Nullable
     public IndexSearcher getSearcher() {
         return searcherHolder != null ? searcherHolder.getSearcher() : null;
+    }
+
+    /**
+     * Opens an {@link AnalyzingInfixSuggester} backed by the stored suggest data,
+     * or {@code null} if no suggest data has been built yet.
+     *
+     * <p>The caller is responsible for closing the returned instance.</p>
+     */
+    @Nullable
+    public AnalyzingInfixSuggester getLookup() {
+        return LuceneNgSuggestHelper.getLookup(indexState, indexName);
     }
 
     /**
