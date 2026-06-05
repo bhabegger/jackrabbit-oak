@@ -104,7 +104,6 @@
     <dependency>
       <groupId>org.apache.jackrabbit</groupId>
       <artifactId>jackrabbit-data</artifactId>
-      <version>${jackrabbit.version}</version>
     </dependency>
     <dependency>
       <groupId>commons-io</groupId>
@@ -187,13 +186,11 @@
     <dependency>
       <groupId>org.apache.tika</groupId>
       <artifactId>tika-core</artifactId>
-      <version>${tika.version}</version>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.apache.tika</groupId>
       <artifactId>tika-parsers</artifactId>
-      <version>${tika.version}</version>
       <scope>test</scope>
       <exclusions>
         <exclusion>
@@ -218,31 +215,6 @@
       <version>${lucene.version}</version>
       <scope>test</scope>
     </dependency>
-    <dependency>
-      <groupId>org.apache.lucene</groupId>
-      <artifactId>lucene-analyzers-common</artifactId>
-      <version>${lucene.version}</version>
-      <optional>true</optional>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.lucene</groupId>
-      <artifactId>lucene-queryparser</artifactId>
-      <version>${lucene.version}</version>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.lucene</groupId>
-      <artifactId>lucene-queries</artifactId>
-      <version>${lucene.version}</version>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.lucene</groupId>
-      <artifactId>lucene-suggest</artifactId>
-      <version>${lucene.version}</version>
-      <scope>test</scope>
-    </dependency>
-
 
     <!-- Test dependencies -->
     <dependency>
@@ -285,7 +257,6 @@
     <dependency>
       <groupId>com.h2database</groupId>
       <artifactId>h2</artifactId>
-      <version>${h2.version}</version>
       <scope>test</scope>
     </dependency>
     <dependency>
